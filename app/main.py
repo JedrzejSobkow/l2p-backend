@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from api.routes import default
-from app.infrastructure.redis_connection import connect_redis, disconnect_redis
+from infrastructure.redis_connection import connect_redis, disconnect_redis
 
 
 @asynccontextmanager
