@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from api.routes import default
 from infrastructure.redis_connection import connect_redis, disconnect_redis
+from infrastructure.postgres_connection import connect_postgres, disconnect_postgres
 
 
 @asynccontextmanager
@@ -12,10 +13,12 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan events"""
     # Startup: Initialize connections
     await connect_redis()
+    await connect_postgres()
     
     yield
     
     # Shutdown: Close connections
+    await disconnect_postgres()
     await disconnect_redis()
 
 
