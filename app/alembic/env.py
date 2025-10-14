@@ -18,7 +18,6 @@ from config.settings import settings
 from infrastructure.postgres_connection import Base
 
 # Import all models here so Alembic can detect them for autogenerate
-from models.user import User  # noqa: F401
 from models.registered_user import RegisteredUser  # noqa: F401
 from models.friendship import Friendship  # noqa: F401
 

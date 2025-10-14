@@ -11,8 +11,8 @@ class Friendship(Base):
     __tablename__ = "friendships"
     
     id_friendship = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id_1 = Column(Integer, ForeignKey("registered_users.user_id"), nullable=False, index=True)
-    user_id_2 = Column(Integer, ForeignKey("registered_users.user_id"), nullable=False, index=True)
+    user_id_1 = Column(Integer, ForeignKey("registered_users.id_user"), nullable=False, index=True)
+    user_id_2 = Column(Integer, ForeignKey("registered_users.id_user"), nullable=False, index=True)
     status = Column(String(50), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
