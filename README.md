@@ -1,4 +1,3 @@
-````markdown
 # L2P-Online Backend
 
 Backend API for L2P-Online built with FastAPI, Redis, and PostgreSQL.
