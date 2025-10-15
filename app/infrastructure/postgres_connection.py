@@ -1,13 +1,14 @@
 # app/infrastructure/postgres_connection.py
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
 from config.settings import settings
 
 
 # Base class for SQLAlchemy models
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 class PostgresConnection:

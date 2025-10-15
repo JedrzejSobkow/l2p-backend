@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "L2P Backend"
     DEBUG: bool = True
     
+    # JWT Authentication Configuration
+    SECRET_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
+    JWT_LIFETIME_SECONDS: int = 3600  # 1 hour
+    
     @property
     def DATABASE_URL(self) -> str:
         """Construct PostgreSQL connection URL for SQLAlchemy"""
