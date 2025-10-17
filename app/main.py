@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from api.routes import default
+from api.routes import default, auth
 from infrastructure.redis_connection import connect_redis, disconnect_redis
 from infrastructure.postgres_connection import connect_postgres, disconnect_postgres
 
@@ -32,4 +32,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(default.router, prefix="")
+app.include_router(default.router, prefix="/v1")
+app.include_router(auth.auth_router, prefix="/v1")
+app.include_router(auth.users_router, prefix="/v1")

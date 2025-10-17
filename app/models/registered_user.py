@@ -1,24 +1,30 @@
 # app/models/registered_user.py
 
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import String, Integer
+from sqlalchemy.orm import Mapped, mapped_column
+from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
 from infrastructure.postgres_connection import Base
 
 
-class RegisteredUser(Base):
-    """Registered User model with authentication details"""
+class RegisteredUser(Base, SQLAlchemyBaseUserTable[int]):
+    """Registered User model with authentication details integrated with fastapi-users"""
     __tablename__ = "registered_users"
     
-    user_id = Column(Integer, ForeignKey("users.id_user"), primary_key=True, index=True)
-    login = Column(String(255), nullable=False, unique=True, index=True)
-    email = Column(String(255), nullable=False, unique=True, index=True)
-    password_hash = Column(String(255), nullable=True)
-    is_active = Column(Boolean, default=False, nullable=False)
-    pfp_path = Column(String(500), nullable=True)
-    description = Column(String(1000), nullable=True)
+    # Explicitly define the id as primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     
-    # Relationship to User model
-    user = relationship("User", back_populates="registered_user")
+    # Custom fields specific to your application
+    nickname: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    pfp_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    
+    # fastapi-users provides these fields automatically:
+    # - id: int (primary key)
+    # - email: str (unique, indexed)
+    # - hashed_password: str
+    # - is_active: bool (default True)
+    # - is_superuser: bool (default False)
+    # - is_verified: bool (default False)
     
     def __repr__(self):
-        return f"<RegisteredUser(user_id={self.user_id}, login='{self.login}', email='{self.email}', is_active={self.is_active})>"
+        return f"<RegisteredUser(id={self.id}, nickname='{self.nickname}', email='{self.email}', is_active={self.is_active})>"
