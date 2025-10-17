@@ -1,10 +1,10 @@
 # app/api/routes/auth.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Response
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
 from schemas.user_schema import UserRead, UserCreate, UserUpdate
-from services.user_manager import get_user_manager
+from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
 
 
@@ -38,13 +38,40 @@ auth_router.include_router(
     fastapi_users.get_verify_router(UserRead),
 )
 
-# Include user management routes (get, update, delete user)
-users_router.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-)
-
 # Dependency to get current active user
 current_active_user = fastapi_users.current_user(active=True)
 
 # Dependency to get current active superuser
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
+
+
+@users_router.delete("/me", status_code=204, tags=["Users"])
+async def delete_current_user(
+    response: Response,
+    user: RegisteredUser = Depends(current_active_user),
+    user_manager: UserManager = Depends(get_user_manager),
+):
+    """
+    Deactivate the current user account and log them out.
+    
+    This endpoint:
+    - Sets the user's is_active field to False
+    - Clears the authentication cookie to log them out
+    """
+    # Deactivate the user account
+    await user_manager.user_db.update(user, {"is_active": False})
+    
+    # Clear the authentication cookie to log out the user
+    response.delete_cookie(
+        key="l2p_auth",
+        httponly=True,
+        samesite="lax",
+    )
+    
+    return None
+
+# Include user management routes (get, update, delete user)
+# Note: This is included AFTER our custom delete endpoint to avoid conflicts
+users_router.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate),
+)
