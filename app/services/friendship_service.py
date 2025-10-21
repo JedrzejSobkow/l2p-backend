@@ -98,25 +98,44 @@ class FriendshipService:
     @staticmethod
     async def accept_friend_request(
         session: AsyncSession,
-        friendship_id: int,
-        user_id: int
+        recipient_id: int,
+        requester_nickname: str
     ) -> Friendship:
         """
         Accept a pending friend request
         
         Args:
             session: Database session
-            friendship_id: ID of the friendship
-            user_id: ID of user accepting the request
+            recipient_id: ID of user accepting the request
+            requester_nickname: Nickname of user who sent the request
             
         Returns:
             Updated friendship object
             
         Raises:
-            HTTPException: If friendship not found, not pending, or user is not the recipient
+            HTTPException: If requester not found, friendship not found, not pending, or user is not the recipient
         """
-        # Get the friendship
-        query = select(Friendship).where(Friendship.id_friendship == friendship_id)
+        # Get the requester by nickname
+        requester_query = select(RegisteredUser).where(
+            RegisteredUser.nickname == requester_nickname,
+            RegisteredUser.is_active == True
+        )
+        result = await session.execute(requester_query)
+        requester = result.scalar_one_or_none()
+        
+        if not requester:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with nickname '{requester_nickname}' not found"
+            )
+        
+        # Get the friendship where requester is user_id_1 and recipient is user_id_2
+        query = select(Friendship).where(
+            and_(
+                Friendship.user_id_1 == requester.id,
+                Friendship.user_id_2 == recipient_id
+            )
+        )
         result = await session.execute(query)
         friendship = result.scalar_one_or_none()
         
@@ -124,13 +143,6 @@ class FriendshipService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Friend request not found"
-            )
-        
-        # Check if user is the recipient (user_id_2)
-        if friendship.user_id_2 != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only accept friend requests sent to you"
             )
         
         # Check if request is pending
@@ -150,22 +162,47 @@ class FriendshipService:
     @staticmethod
     async def remove_friendship(
         session: AsyncSession,
-        friendship_id: int,
-        user_id: int
+        user_id: int,
+        friend_nickname: str
     ) -> None:
         """
         Remove a friendship or reject a friend request
         
         Args:
             session: Database session
-            friendship_id: ID of the friendship
             user_id: ID of user removing the friendship
+            friend_nickname: Nickname of the friend to remove
             
         Raises:
-            HTTPException: If friendship not found or user is not part of the friendship
+            HTTPException: If friend not found, friendship not found, or user is not part of the friendship
         """
-        # Get the friendship
-        query = select(Friendship).where(Friendship.id_friendship == friendship_id)
+        # Get the friend by nickname
+        friend_query = select(RegisteredUser).where(
+            RegisteredUser.nickname == friend_nickname,
+            RegisteredUser.is_active == True
+        )
+        result = await session.execute(friend_query)
+        friend = result.scalar_one_or_none()
+        
+        if not friend:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with nickname '{friend_nickname}' not found"
+            )
+        
+        # Get the friendship (in either direction)
+        query = select(Friendship).where(
+            or_(
+                and_(
+                    Friendship.user_id_1 == user_id,
+                    Friendship.user_id_2 == friend.id
+                ),
+                and_(
+                    Friendship.user_id_1 == friend.id,
+                    Friendship.user_id_2 == user_id
+                )
+            )
+        )
         result = await session.execute(query)
         friendship = result.scalar_one_or_none()
         
@@ -173,13 +210,6 @@ class FriendshipService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Friendship not found"
-            )
-        
-        # Check if user is part of the friendship
-        if friendship.user_id_1 != user_id and friendship.user_id_2 != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only remove your own friendships"
             )
         
         # Delete the friendship
@@ -234,8 +264,6 @@ class FriendshipService:
                 is_requester = False
             
             friendship_list.append(FriendshipWithUser(
-                id_friendship=friendship.id_friendship,
-                friend_id=friend_id,
                 friend_nickname=friend.nickname,
                 friend_pfp_path=friend.pfp_path,
                 friend_description=friend.description,
@@ -308,7 +336,6 @@ class FriendshipService:
         # Transform to response format
         user_list = [
             UserSearchResult(
-                id=user.id,
                 nickname=user.nickname,
                 pfp_path=user.pfp_path,
                 description=user.description

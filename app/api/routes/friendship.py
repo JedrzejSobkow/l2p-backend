@@ -89,46 +89,46 @@ async def send_friend_request(
     return friendship
 
 
-@friendship_router.post("/{friendship_id}/accept", response_model=FriendshipResponse)
+@friendship_router.post("/accept", response_model=FriendshipResponse)
 async def accept_friend_request(
-    friendship_id: int,
+    friendship_data: FriendshipCreate,
     current_user: RegisteredUser = Depends(current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ):
     """
     Accept a pending friend request.
     
-    - **friendship_id**: ID of the friendship to accept
+    - **nickname**: Nickname of the user who sent the friend request
     
     Only the recipient of the friend request can accept it.
     """
     friendship = await FriendshipService.accept_friend_request(
         session=session,
-        friendship_id=friendship_id,
-        user_id=current_user.id
+        recipient_id=current_user.id,
+        requester_nickname=friendship_data.nickname
     )
     
     return friendship
 
 
-@friendship_router.delete("/{friendship_id}", status_code=status.HTTP_204_NO_CONTENT)
+@friendship_router.delete("/{nickname}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_friendship(
-    friendship_id: int,
+    nickname: str,
     current_user: RegisteredUser = Depends(current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ):
     """
     Remove a friendship or reject a friend request.
     
-    - **friendship_id**: ID of the friendship to remove
+    - **nickname**: Nickname of the friend to remove
     
     Either user in the friendship can remove it.
     If the friendship is pending, this acts as rejecting the request.
     """
     await FriendshipService.remove_friendship(
         session=session,
-        friendship_id=friendship_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        friend_nickname=nickname
     )
     
     return None
