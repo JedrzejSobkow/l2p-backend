@@ -39,7 +39,7 @@ auth_router.include_router(
 )
 
 # Dependency to get current active user
-current_active_user = fastapi_users.current_user(active=True)
+current_active_user = fastapi_users.current_user(active=True) #TODO verification required?
 
 # Dependency to get current active superuser
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
