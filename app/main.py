@@ -24,10 +24,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS configuration - important: can't use "*" with allow_credentials=True
+# Add your frontend URLs here
 app.add_middleware(
     middleware_class=CORSMiddleware,
-    allow_origins=["*"],  #TODO adres frontendu zamiast '*'
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:3000",  # React/Next.js default
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,  # Required for cookies/authentication
     allow_methods=["*"],
     allow_headers=["*"],
 )

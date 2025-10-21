@@ -9,6 +9,7 @@ from models.registered_user import RegisteredUser
 from infrastructure.user_database import get_user_db
 from config.settings import settings
 from schemas.user_schema import UserCreate, UserUpdate
+from services.email_service import email_service
 
 
 class UserManager(IntegerIDMixin, BaseUserManager[RegisteredUser, int]):
@@ -47,12 +48,24 @@ class UserManager(IntegerIDMixin, BaseUserManager[RegisteredUser, int]):
     ):
         """Hook called after forgot password request"""
         print(f"🔑 User {user.id} ({user.email}) has forgotten their password. Reset token: {token}")
+        # Send password reset email
+        await email_service.send_password_reset_email(
+            email=user.email,
+            token=token,
+            nickname=user.nickname
+        )
     
     async def on_after_request_verify(
         self, user: RegisteredUser, token: str, request: Optional[Request] = None
     ):
         """Hook called after verification request"""
         print(f"📧 Verification requested for user {user.id} ({user.email}). Verification token: {token}")
+        # Send verification email
+        await email_service.send_verification_email(
+            email=user.email,
+            token=token,
+            nickname=user.nickname
+        )
     
     async def on_after_login(
         self, 

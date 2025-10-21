@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
     JWT_LIFETIME_SECONDS: int = 3600  # 1 hour
     
+    # Email Configuration (Resend API)
+    RESEND_API_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
+    EMAIL_FROM: str = "onboarding@resend.dev"
+    FRONTEND_URL: str = "http://localhost:5173"  # Frontend URL for verification links #TODO ADD REDIRECT
+    
     @property
     def DATABASE_URL(self) -> str:
         """Construct PostgreSQL connection URL for SQLAlchemy"""
