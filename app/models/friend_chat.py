@@ -15,5 +15,8 @@ class FriendChat(Base):
     # Relationship to Friendship model
     friendship = relationship("Friendship", back_populates="friend_chat")
     
+    # Relationship to ChatMessage model (one-to-many)
+    messages = relationship("ChatMessage", back_populates="friend_chat", cascade="all, delete-orphan")
+    
     def __repr__(self):
         return f"<FriendChat(id_friend_chat={self.id_friend_chat}, friendship_id={self.friendship_id})>"
