@@ -65,14 +65,15 @@ async def delete_current_user(
     user_manager: UserManager = Depends(get_user_manager),
 ):
     """
-    Deactivate the current user account and log them out.
+    Permanently delete the current user account and log them out.
     
     This endpoint:
-    - Sets the user's is_active field to False
+    - Completely removes the user from the database
     - Clears the authentication cookie to log them out
     """
-    # Deactivate the user account
-    await user_manager.user_db.update(user, {"is_active": False})
+    # Delete the user from the database
+    # await user_manager.user_db.update(user, {"is_active": False}) just deactivating
+    await user_manager.user_db.delete(user)
     
     # Clear the authentication cookie to log out the user
     response.delete_cookie(
