@@ -37,7 +37,7 @@ class UserManager(IntegerIDMixin, BaseUserManager[RegisteredUser, int]):
             exclude_user_id: Optional user ID to exclude from the check (for updates)
             
         Raises:
-            EmailAlreadyExists: If email is already registered
+            EmailAlreadyExists: If email is already registered.
         """
         query = select(RegisteredUser).where(RegisteredUser.email == email)
         if exclude_user_id is not None:
