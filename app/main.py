@@ -2,10 +2,12 @@
 
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from api.routes import default, auth
 from infrastructure.redis_connection import connect_redis, disconnect_redis
 from infrastructure.postgres_connection import connect_postgres, disconnect_postgres
+from services.user_manager import NicknameAlreadyExists, EmailAlreadyExists
 
 
 @asynccontextmanager
@@ -23,6 +25,26 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+# Exception handlers for custom validation errors
+@app.exception_handler(NicknameAlreadyExists)
+async def nickname_already_exists_handler(request: Request, exc: NicknameAlreadyExists):
+    """Handle nickname already exists exception"""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": {"field": "nickname", "message": str(exc)}}
+    )
+
+
+@app.exception_handler(EmailAlreadyExists)
+async def email_already_exists_handler(request: Request, exc: EmailAlreadyExists):
+    """Handle email already exists exception"""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": {"field": "email", "message": str(exc)}}
+    )
+
 
 # CORS configuration - important: can't use "*" with allow_credentials=True
 # Add your frontend URLs here

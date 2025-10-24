@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     JWT_LIFETIME_SECONDS: int = 3600  # 1 hour
     
     # Email Configuration (Resend API)
-    RESEND_API_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
+    RESEND_API_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE" # Must be changed in .env file!
     EMAIL_FROM: str = "L2P <noreply@rychu777.com>"  # Your verified domain
     FRONTEND_URL: str = "http://localhost:5173"  # Frontend URL for verification links #TODO ADD REDIRECT
     
