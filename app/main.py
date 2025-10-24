@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
-from api.routes import default, auth
+from api.routes import default, auth, avatars
 from infrastructure.redis_connection import connect_redis, disconnect_redis
 from infrastructure.postgres_connection import connect_postgres, disconnect_postgres
 from services.user_manager import NicknameAlreadyExists, EmailAlreadyExists
@@ -64,3 +64,5 @@ app.add_middleware(
 app.include_router(default.router, prefix="/v1")
 app.include_router(auth.auth_router, prefix="/v1")
 app.include_router(auth.users_router, prefix="/v1")
+app.include_router(avatars.avatar_router, prefix="/v1")
+
