@@ -1,11 +1,10 @@
 # app/api/routes/auth.py
 
-from fastapi import APIRouter, Depends, Response, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Response, Request
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
 from schemas.user_schema import UserRead, UserCreate, UserUpdate
-from services.user_manager import get_user_manager, UserManager, NicknameAlreadyExists, EmailAlreadyExists
+from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
 
 
@@ -24,10 +23,23 @@ auth_router.include_router(
     fastapi_users.get_auth_router(auth_backend),
 )
 
-# Include registration route
-auth_router.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
-)
+# Custom registration endpoint that automatically requests verification
+@auth_router.post("/register", response_model=UserRead)
+async def register_and_verify(
+    request: Request,
+    user_create: UserCreate,
+    user_manager: UserManager = Depends(get_user_manager),
+):
+    """Register a new user and automatically request email verification"""
+    # Register the user
+    user = await user_manager.create(user_create, safe=True, request=request)
+    
+    # If registration was successful, request verification
+    if user:
+        # Generate and send verification token
+        token = await user_manager.request_verify(user, request)
+    
+    return user
 
 # Include password reset routes
 auth_router.include_router(
