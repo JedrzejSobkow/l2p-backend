@@ -1,10 +1,11 @@
 # app/api/routes/auth.py
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, Request, status
+from fastapi.responses import JSONResponse
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
 from schemas.user_schema import UserRead, UserCreate, UserUpdate
-from services.user_manager import get_user_manager, UserManager
+from services.user_manager import get_user_manager, UserManager, NicknameAlreadyExists, EmailAlreadyExists
 from infrastructure.auth_config import auth_backend
 
 
@@ -17,6 +18,26 @@ fastapi_users = FastAPIUsers[RegisteredUser, int](
 # Create routers
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 users_router = APIRouter(prefix="/users", tags=["Users"])
+
+
+# Exception handlers for custom validation errors
+@auth_router.exception_handler(NicknameAlreadyExists)
+async def nickname_already_exists_handler(request: Request, exc: NicknameAlreadyExists):
+    """Handle nickname already exists exception"""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": {"field": "nickname", "message": str(exc)}}
+    )
+
+
+@auth_router.exception_handler(EmailAlreadyExists)
+async def email_already_exists_handler(request: Request, exc: EmailAlreadyExists):
+    """Handle email already exists exception"""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": {"field": "email", "message": str(exc)}}
+    )
+
 
 # Include authentication routes (login, logout)
 auth_router.include_router(
