@@ -130,7 +130,7 @@ class ChatService:
         friend_nickname: str,
         page: int = 1,
         page_size: int = 50
-    ) -> Tuple[List[ChatMessageResponse], int, str]:
+    ) -> dict:
         """
         Get chat history with a friend (paginated)
         
@@ -142,7 +142,7 @@ class ChatService:
             page_size: Number of messages per page
             
         Returns:
-            Tuple of (list of messages, total count, friend_nickname)
+            Dictionary with messages and pagination info
         """
         # Get or verify friend chat exists
         friend_chat, current_user, friend = await ChatService.get_or_create_friend_chat(
@@ -167,18 +167,29 @@ class ChatService:
         result = await session.execute(messages_query)
         messages = result.scalars().all()
         
-        # Transform to response format
+        # Transform to response format (as dict for Socket.IO)
         message_list = [
-            ChatMessageResponse(
-                sender_nickname=msg.sender.nickname,
-                content=msg.content,
-                created_at=msg.created_at,
-                is_mine=(msg.sender_id == user_id)
-            )
+            {
+                'id': msg.id_message,
+                'sender_id': msg.sender_id,
+                'sender_nickname': msg.sender.nickname,
+                'content': msg.content,
+                'created_at': msg.created_at.isoformat(),
+                'is_mine': (msg.sender_id == user_id)
+            }
             for msg in messages
         ]
         
-        return message_list, total, friend.nickname
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+        
+        return {
+            'messages': message_list,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages,
+            'friend_nickname': friend.nickname
+        }
     
     @staticmethod
     async def verify_chat_access(

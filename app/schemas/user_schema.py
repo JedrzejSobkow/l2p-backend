@@ -42,7 +42,6 @@ class UserValidatorsMixin:
 
 class UserRead(schemas.BaseUser[int]):
     """Schema for reading user data"""
-    id: None = None  # Hide the ID field from responses
     nickname: str
     email: str
     is_active: bool = True

@@ -1,16 +1,131 @@
 # app/api/routes/chat.py
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
+import socketio
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict
-from models.registered_user import RegisteredUser
-from schemas.chat_schema import ChatHistoryResponse
+from typing import Dict, Optional
 from services.chat_service import ChatService
 from infrastructure.postgres_connection import postgres_connection
-from api.routes.auth import current_active_user
-import json
-import math
-from models.registered_user import RegisteredUser as DBRegisteredUser
+from config.settings import settings
+from jose import jwt, JWTError
+from sqlalchemy import select
+from models.registered_user import RegisteredUser
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create Socket.IO server with proper configuration
+sio = socketio.AsyncServer(
+    async_mode='asgi',
+    cors_allowed_origins='*',  # TODO: Configure proper CORS for production
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25
+)
+
+
+class ConnectionManager:
+    """Manages Socket.IO connections for real-time chat"""
+    
+    def __init__(self):
+        # Maps user_id to their session_id (sid)
+        self.active_connections: Dict[int, str] = {}
+        # Maps session_id to user_id
+        self.sid_to_user: Dict[str, int] = {}
+        # Maps session_id to user email (for reference)
+        self.sid_to_email: Dict[str, str] = {}
+    
+    def connect(self, sid: str, user_id: int, email: str):
+        """Register a user's connection"""
+        # If user already connected from another session, disconnect old session
+        if user_id in self.active_connections:
+            old_sid = self.active_connections[user_id]
+            if old_sid in self.sid_to_user:
+                del self.sid_to_user[old_sid]
+            if old_sid in self.sid_to_email:
+                del self.sid_to_email[old_sid]
+        
+        self.active_connections[user_id] = sid
+        self.sid_to_user[sid] = user_id
+        self.sid_to_email[sid] = email
+        logger.info(f"User {user_id} ({email}) connected with session {sid}")
+    
+    def disconnect(self, sid: str):
+        """Unregister a user's connection"""
+        if sid in self.sid_to_user:
+            user_id = self.sid_to_user[sid]
+            email = self.sid_to_email.get(sid, "unknown")
+            del self.active_connections[user_id]
+            del self.sid_to_user[sid]
+            if sid in self.sid_to_email:
+                del self.sid_to_email[sid]
+            logger.info(f"User {user_id} ({email}) disconnected (session {sid})")
+    
+    def get_user_id(self, sid: str) -> int:
+        """Get user_id from session_id"""
+        return self.sid_to_user.get(sid)
+    
+    def get_sid(self, user_id: int) -> str:
+        """Get session_id from user_id"""
+        return self.active_connections.get(user_id)
+    
+    def is_user_online(self, user_id: int) -> bool:
+        """Check if user is currently connected"""
+        return user_id in self.active_connections
+
+
+# Global connection manager instance
+manager = ConnectionManager()
+
+
+# Helper function to authenticate user from JWT token
+async def authenticate_user(token: str) -> Optional[RegisteredUser]:
+    """
+    Authenticate user from JWT token
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        RegisteredUser if valid, None otherwise
+    """
+    try:
+        # Decode JWT token with proper audience
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+            audience="fastapi-users:auth"  # fastapi-users uses this audience
+        )
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            logger.warning("Token missing 'sub' claim")
+            return None
+        
+        # Get database session and fetch user
+        async with postgres_connection.session_factory() as session:
+            user_query = select(RegisteredUser).where(
+                RegisteredUser.id == int(user_id),
+                RegisteredUser.is_active == True
+            )
+            result = await session.execute(user_query)
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                logger.warning(f"User not found for id: {user_id}")
+                return None
+            
+            return user
+            
+    except JWTError as e:
+        logger.warning(f"JWT validation error: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        return None
 
 
 # Dependency to get database session
@@ -23,220 +138,234 @@ async def get_db_session():
         yield session
 
 
-# Create router
-chat_router = APIRouter(prefix="/chat", tags=["Chat"])
-
-
-class ConnectionManager:
-    """Manages WebSocket connections for real-time chat"""
-    
-    def __init__(self):
-        # Maps user_id to their WebSocket connection
-        self.active_connections: Dict[int, WebSocket] = {}
-    
-    async def connect(self, websocket: WebSocket, user_id: int):
-        """Connect a user's WebSocket"""
-        await websocket.accept()
-        self.active_connections[user_id] = websocket
-    
-    def disconnect(self, user_id: int):
-        """Disconnect a user's WebSocket"""
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
-    
-    async def send_personal_message(self, message: dict, user_id: int):
-        """Send a message to a specific user"""
-        if user_id in self.active_connections:
-            websocket = self.active_connections[user_id]
-            try:
-                await websocket.send_json(message)
-            except Exception:
-                # Connection is broken, remove it
-                self.disconnect(user_id)
-
-
-# Global connection manager instance
-manager = ConnectionManager()
-
-
-@chat_router.websocket("/ws")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    token: str = Query(...),
-):
+@sio.event
+async def connect(sid, environ):
     """
-    WebSocket endpoint for real-time chat
+    Handle client connection
+    Requires JWT authentication via query parameter OR cookie
     
-    Connect with: ws://host/chat/ws?token=<your_jwt_token>
+    Client can connect with:
+    1. Query parameter: io('http://server', { query: { token: 'jwt_token_here' } })
+    2. Cookie: Browser will automatically send cookies (recommended for web apps)
+    """
+    # Extract token from query parameters OR cookies
+    query_string = environ.get('QUERY_STRING', '')
+    token = None
     
-    Send messages as JSON:
+    # Try to get token from query string first
+    if query_string:
+        from urllib.parse import parse_qs
+        params = parse_qs(query_string)
+        token = params.get('token', [None])[0]
+    
+    # If no token in query, try to get from cookies
+    if not token:
+        cookie_header = environ.get('HTTP_COOKIE', '')
+        if cookie_header:
+            # Parse cookies manually
+            cookies = {}
+            for cookie in cookie_header.split(';'):
+                cookie = cookie.strip()
+                if '=' in cookie:
+                    name, value = cookie.split('=', 1)
+                    cookies[name] = value
+            
+            token = cookies.get('l2p_auth')
+    
+    if not token:
+        logger.warning(f"Connection attempt without token from {sid}")
+        await sio.emit('error', {
+            'message': 'Authentication required. Please provide token in query parameter or login cookie.'
+        }, room=sid)
+        await sio.disconnect(sid)
+        return False
+    
+    # Authenticate user
+    user = await authenticate_user(token)
+    if not user:
+        logger.warning(f"Authentication failed for session {sid}")
+        await sio.emit('error', {'message': 'Invalid or expired token'}, room=sid)
+        await sio.disconnect(sid)
+        return False
+    
+    # Register user connection
+    manager.connect(sid, user.id, user.email)
+    
+    logger.info(f"Client authenticated and connected: {sid} (User: {user.id}, Email: {user.email})")
+    await sio.emit('connected', {
+        'message': 'Connected to chat server',
+        'user_id': user.id,
+        'email': user.email,
+        'nickname': user.nickname
+    }, room=sid)
+
+
+@sio.event
+async def disconnect(sid):
+    """
+    Handle client disconnection
+    """
+    logger.info(f"Client disconnected: {sid}")
+    manager.disconnect(sid)
+
+
+@sio.event
+async def send_message(sid, data):
+    """
+    Handle sending a message
+    User is already authenticated from connection
+    
+    Expected data:
     {
         "friend_nickname": "friend_username",
         "content": "Hello!"
     }
-    
-    Receive messages as JSON:
-    {
-        "type": "message",
-        "sender_nickname": "friend_username",
-        "content": "Hello!",
-        "created_at": "2025-10-21T12:00:00",
-        "is_mine": false
-    }
-    or
-    {
-        "type": "error",
-        "detail": "Error message"
-    }
     """
-    # Authenticate user from token
-    from infrastructure.auth_config import get_jwt_strategy
-    from jose import jwt, JWTError
-    from config.settings import settings
-    
     try:
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=["HS256"]
-        )
-        user_email = payload.get("sub")
+        user_id = manager.get_user_id(sid)
+        if not user_id:
+            await sio.emit('error', {'message': 'Not authenticated. Please reconnect.'}, room=sid)
+            return
         
-        if not user_email:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        friend_nickname = data.get('friend_nickname')
+        content = data.get('content')
+        
+        if not friend_nickname or not content:
+            await sio.emit('error', {'message': 'friend_nickname and content are required'}, room=sid)
             return
         
         # Get database session
-        async with postgres_connection.session_factory() as session:
-            # Get the user from database
-            from sqlalchemy import select
-            db_user_query = select(DBRegisteredUser).where(
-                DBRegisteredUser.email == user_email,
-                DBRegisteredUser.is_active == True
-            )
-            result = await session.execute(db_user_query)
-            db_user = result.scalar_one_or_none()
-            
-            if not db_user:
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
-            
-            user_id = db_user.id
-            
-            # Connect the WebSocket
-            await manager.connect(websocket, user_id)
-            
+        async for session in get_db_session():
             try:
-                while True:
-                    # Receive message from WebSocket
-                    data = await websocket.receive_text()
-                    
-                    try:
-                        message_data = json.loads(data)
-                        friend_nickname = message_data.get("friend_nickname")
-                        content = message_data.get("content")
-                        
-                        if not friend_nickname or not content:
-                            await websocket.send_json({
-                                "type": "error",
-                                "detail": "Both 'friend_nickname' and 'content' are required"
-                            })
-                            continue
-                        
-                        # Validate content length
-                        if len(content) < 1 or len(content) > 10000:
-                            await websocket.send_json({
-                                "type": "error",
-                                "detail": "Content must be between 1 and 10000 characters"
-                            })
-                            continue
-                        
-                        # Get or create friend chat
-                        friend_chat, current_user, friend = await ChatService.get_or_create_friend_chat(
-                            session, user_id, friend_nickname
-                        )
-                        
-                        # Save message to database
-                        saved_message = await ChatService.save_message(
-                            session, friend_chat.id_friend_chat, user_id, content
-                        )
-                        
-                        # Prepare response message
-                        response_message = {
-                            "type": "message",
-                            "sender_nickname": current_user.nickname,
-                            "content": saved_message.content,
-                            "created_at": saved_message.created_at.isoformat()
-                        }
-                        
-                        # Send confirmation to sender
-                        await websocket.send_json({
-                            **response_message,
-                            "is_mine": True
-                        })
-                        
-                        # Send message to recipient if they're online
-                        await manager.send_personal_message(
-                            {
-                                **response_message,
-                                "is_mine": False
-                            },
-                            friend.id
-                        )
-                        
-                    except json.JSONDecodeError:
-                        await websocket.send_json({
-                            "type": "error",
-                            "detail": "Invalid JSON format"
-                        })
-                    except Exception as e:
-                        await websocket.send_json({
-                            "type": "error",
-                            "detail": str(e)
-                        })
-                        
-            except WebSocketDisconnect:
-                manager.disconnect(user_id)
+                # Get or create friend chat
+                friend_chat, current_user, friend = await ChatService.get_or_create_friend_chat(
+                    session=session,
+                    user_id=user_id,
+                    friend_nickname=friend_nickname
+                )
                 
-    except JWTError:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                # Save message to database
+                message = await ChatService.save_message(
+                    session=session,
+                    friend_chat_id=friend_chat.id_friend_chat,
+                    sender_id=user_id,
+                    content=content
+                )
+                
+                # Prepare message data
+                message_data = {
+                    'id': message.id_message,
+                    'sender_id': user_id,
+                    'sender_nickname': current_user.nickname,
+                    'content': content,
+                    'created_at': message.created_at.isoformat(),
+                    'friend_chat_id': friend_chat.id_friend_chat
+                }
+                
+                # Send to sender (confirmation)
+                await sio.emit('message', {
+                    **message_data,
+                    'is_mine': True
+                }, room=sid)
+                
+                # Send to recipient if online
+                friend_sid = manager.get_sid(friend.id)
+                if friend_sid:
+                    await sio.emit('message', {
+                        **message_data,
+                        'is_mine': False
+                    }, room=friend_sid)
+                    logger.info(f"Message sent to online user {friend.id}")
+                else:
+                    logger.info(f"User {friend.id} is offline, message saved to database")
+                
+            except Exception as e:
+                logger.error(f"Error sending message: {str(e)}")
+                await sio.emit('error', {'message': str(e)}, room=sid)
+            
     except Exception as e:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        logger.error(f"Error in send_message: {str(e)}")
+        await sio.emit('error', {'message': f'Failed to send message: {str(e)}'}, room=sid)
 
 
-@chat_router.get("/history/{friend_nickname}", response_model=ChatHistoryResponse)
-async def get_chat_history(
-    friend_nickname: str,
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=100, description="Number of messages per page"),
-    current_user: RegisteredUser = Depends(current_active_user),
-    session: AsyncSession = Depends(get_db_session),
-):
+@sio.event
+async def get_chat_history(sid, data):
     """
-    Get chat history with a friend (paginated, newest first)
+    Get chat history with a friend
+    User is already authenticated from connection
     
-    - **friend_nickname**: Nickname of the friend
-    - **page**: Page number (default: 1)
-    - **page_size**: Number of messages per page (default: 50, max: 100)
-    
-    Returns paginated list of messages with the friend.
+    Expected data:
+    {
+        "friend_nickname": "friend_username",
+        "page": 1,
+        "page_size": 50
+    }
     """
-    messages, total, friend_nick = await ChatService.get_chat_history(
-        session=session,
-        user_id=current_user.id,
-        friend_nickname=friend_nickname,
-        page=page,
-        page_size=page_size
-    )
+    try:
+        user_id = manager.get_user_id(sid)
+        if not user_id:
+            await sio.emit('error', {'message': 'Not authenticated. Please reconnect.'}, room=sid)
+            return
+        
+        friend_nickname = data.get('friend_nickname')
+        page = data.get('page', 1)
+        page_size = data.get('page_size', 50)
+        
+        if not friend_nickname:
+            await sio.emit('error', {'message': 'friend_nickname is required'}, room=sid)
+            return
+        
+        # Get database session
+        async for session in get_db_session():
+            try:
+                # Get chat history
+                history = await ChatService.get_chat_history(
+                    session=session,
+                    user_id=user_id,
+                    friend_nickname=friend_nickname,
+                    page=page,
+                    page_size=page_size
+                )
+                
+                # Send chat history
+                await sio.emit('chat_history', history, room=sid)
+                
+            except Exception as e:
+                logger.error(f"Error getting chat history: {str(e)}")
+                await sio.emit('error', {'message': str(e)}, room=sid)
+            
+    except Exception as e:
+        logger.error(f"Error in get_chat_history: {str(e)}")
+        await sio.emit('error', {'message': f'Failed to get chat history: {str(e)}'}, room=sid)
+
+
+@sio.event
+async def typing(sid, data):
+    """
+    Notify friend that user is typing
     
-    total_pages = math.ceil(total / page_size) if total > 0 else 0
-    
-    return ChatHistoryResponse(
-        messages=messages,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        friend_nickname=friend_nick
-    )
+    Expected data:
+    {
+        "friend_id": 456
+    }
+    """
+    try:
+        user_id = manager.get_user_id(sid)
+        if not user_id:
+            return
+        
+        friend_id = data.get('friend_id')
+        if not friend_id:
+            return
+        
+        # Send typing indicator to friend if online
+        friend_sid = manager.get_sid(friend_id)
+        if friend_sid:
+            await sio.emit('user_typing', {'user_id': user_id}, room=friend_sid)
+            
+    except Exception as e:
+        logger.error(f"Error in typing: {str(e)}")
+
+
+# Create ASGI application
+socket_app = socketio.ASGIApp(sio)
