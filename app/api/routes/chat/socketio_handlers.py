@@ -1,10 +1,10 @@
-# app/api/routes/chat.py
+# app/api/routes/chat/socketio_handlers.py
 
 import socketio
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Optional
 from services.chat_service import ChatService
-from infrastructure.postgres_connection import postgres_connection
+from infrastructure.postgres_connection import get_db_session, postgres_connection
 from config.settings import settings
 from jose import jwt, JWTError
 from sqlalchemy import select
@@ -128,15 +128,6 @@ async def authenticate_user(token: str) -> Optional[RegisteredUser]:
         return None
 
 
-# Dependency to get database session
-async def get_db_session():
-    """Get database session"""
-    if not postgres_connection.session_factory:
-        raise RuntimeError("Database not connected")
-    
-    async with postgres_connection.session_factory() as session:
-        yield session
-
 
 @sio.event
 async def connect(sid, environ):
@@ -147,6 +138,8 @@ async def connect(sid, environ):
     Client can connect with:
     1. Query parameter: io('http://server', { query: { token: 'jwt_token_here' } })
     2. Cookie: Browser will automatically send cookies (recommended for web apps)
+    
+    Tags: socketio, chat, connection, authentication
     """
     # Extract token from query parameters OR cookies
     query_string = environ.get('QUERY_STRING', '')
@@ -198,12 +191,29 @@ async def connect(sid, environ):
         'email': user.email,
         'nickname': user.nickname
     }, room=sid)
+    
+    # Send recent conversations list
+    async for session in get_db_session():
+        try:
+            conversations = await ChatService.get_recent_conversations(
+                session=session,
+                user_id=user.id,
+                limit=50
+            )
+            await sio.emit('recent_conversations', {
+                'conversations': conversations
+            }, room=sid)
+        except Exception as e:
+            logger.error(f"Error loading recent conversations on connect: {str(e)}")
+
 
 
 @sio.event
 async def disconnect(sid):
     """
     Handle client disconnection
+    
+    Tags: socketio, chat, disconnection
     """
     logger.info(f"Client disconnected: {sid}")
     manager.disconnect(sid)
@@ -215,11 +225,19 @@ async def send_message(sid, data):
     Handle sending a message
     User is already authenticated from connection
     
+    For images, use the presigned upload flow:
+    1. get_upload_url (HTTP) - Get presigned URL
+    2. Upload directly to MinIO
+    3. send_message (this event) - Save message with image_path
+    
     Expected data:
     {
         "friend_nickname": "friend_username",
-        "content": "Hello!"
+        "content": "Hello!",  // Optional if image_path is provided
+        "image_path": "bucket/path/to/image.jpg"  // Optional, from get_upload_url
     }
+    
+    Tags: socketio, chat, messaging, image-upload
     """
     try:
         user_id = manager.get_user_id(sid)
@@ -229,28 +247,44 @@ async def send_message(sid, data):
         
         friend_nickname = data.get('friend_nickname')
         content = data.get('content')
+        image_path = data.get('image_path')
         
-        if not friend_nickname or not content:
-            await sio.emit('error', {'message': 'friend_nickname and content are required'}, room=sid)
+        if not friend_nickname:
+            await sio.emit('error', {'message': 'friend_nickname is required'}, room=sid)
+            return
+        
+        # Either content or image_path must be provided
+        if not content and not image_path:
+            await sio.emit('error', {'message': 'Either content or image_path is required'}, room=sid)
             return
         
         # Get database session
         async for session in get_db_session():
             try:
-                # Get or create friend chat
-                friend_chat, current_user, friend = await ChatService.get_or_create_friend_chat(
+                # Get friendship
+                friendship, current_user, friend = await ChatService.get_friendship(
                     session=session,
                     user_id=user_id,
                     friend_nickname=friend_nickname
                 )
                 
+                # Validate image_path if provided
+                if image_path:
+                    ChatService.validate_image_path(image_path, friendship.id_friendship)
+                
                 # Save message to database
                 message = await ChatService.save_message(
                     session=session,
-                    friend_chat_id=friend_chat.id_friend_chat,
+                    friendship_id=friendship.id_friendship,
                     sender_id=user_id,
-                    content=content
+                    content=content,
+                    image_path=image_path
                 )
+                
+                # Get image URL if image_path is provided
+                image_url = None
+                if image_path:
+                    image_url = ChatService._get_image_url(image_path)
                 
                 # Prepare message data
                 message_data = {
@@ -258,8 +292,9 @@ async def send_message(sid, data):
                     'sender_id': user_id,
                     'sender_nickname': current_user.nickname,
                     'content': content,
+                    'image_url': image_url,
                     'created_at': message.created_at.isoformat(),
-                    'friend_chat_id': friend_chat.id_friend_chat
+                    'friendship_id': friendship.id_friendship
                 }
                 
                 # Send to sender (confirmation)
@@ -276,8 +311,34 @@ async def send_message(sid, data):
                         'is_mine': False
                     }, room=friend_sid)
                     logger.info(f"Message sent to online user {friend.id}")
+                    
+                    # Update friend's conversation list
+                    try:
+                        friend_conversations = await ChatService.get_recent_conversations(
+                            session=session,
+                            user_id=friend.id,
+                            limit=50
+                        )
+                        await sio.emit('recent_conversations', {
+                            'conversations': friend_conversations
+                        }, room=friend_sid)
+                    except Exception as e:
+                        logger.error(f"Error updating friend's conversations: {str(e)}")
                 else:
                     logger.info(f"User {friend.id} is offline, message saved to database")
+                
+                # Update sender's conversation list
+                try:
+                    sender_conversations = await ChatService.get_recent_conversations(
+                        session=session,
+                        user_id=user_id,
+                        limit=50
+                    )
+                    await sio.emit('recent_conversations', {
+                        'conversations': sender_conversations
+                    }, room=sid)
+                except Exception as e:
+                    logger.error(f"Error updating sender's conversations: {str(e)}")
                 
             except Exception as e:
                 logger.error(f"Error sending message: {str(e)}")
@@ -289,17 +350,89 @@ async def send_message(sid, data):
 
 
 @sio.event
-async def get_chat_history(sid, data):
+async def typing(sid, data):
     """
-    Get chat history with a friend
-    User is already authenticated from connection
+    Notify friend that user is typing
     
     Expected data:
     {
-        "friend_nickname": "friend_username",
-        "page": 1,
-        "page_size": 50
+        "friend_nickname": "john_doe"  // Nickname of the friend to notify
     }
+    
+    Tags: socketio, chat, typing-indicator
+    """
+    try:
+        user_id = manager.get_user_id(sid)
+        if not user_id:
+            return
+        
+        friend_nickname = data.get('friend_nickname')
+        if not friend_nickname:
+            return
+        
+        # Get database session to fetch user info
+        async for session in get_db_session():
+            try:
+                # Get current user info
+                user_query = select(RegisteredUser).where(RegisteredUser.id == user_id)
+                result = await session.execute(user_query)
+                current_user = result.scalar_one_or_none()
+                
+                if not current_user:
+                    return
+                
+                # Get friend info
+                friend_query = select(RegisteredUser).where(
+                    RegisteredUser.nickname == friend_nickname,
+                    RegisteredUser.is_active == True
+                )
+                result = await session.execute(friend_query)
+                friend = result.scalar_one_or_none()
+                
+                if not friend:
+                    return
+                
+                # Send typing indicator to friend if online
+                friend_sid = manager.get_sid(friend.id)
+                if friend_sid:
+                    await sio.emit('user_typing', {
+                        'user_id': user_id,
+                        'nickname': current_user.nickname
+                    }, room=friend_sid)
+                    
+            except Exception as e:
+                logger.error(f"Error processing typing indicator: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Error in typing: {str(e)}")
+
+
+@sio.event
+async def get_recent_conversations(sid, data=None):
+    """
+    Get user's recent conversations sorted by last message
+    User is already authenticated from connection
+    
+    Expected data: {} (no parameters needed)
+    
+    Response will include:
+    {
+        "conversations": [
+            {
+                "friend_chat_id": 123,
+                "friend_id": 456,
+                "friend_nickname": "john_doe",
+                "friend_email": "john@example.com",
+                "last_message_time": "2025-10-28T10:30:00",
+                "last_message_content": "Hello!",
+                "last_message_is_mine": false,
+                "unread_count": 0
+            },
+            ...
+        ]
+    }
+    
+    Tags: socketio, chat, conversations
     """
     try:
         user_id = manager.get_user_id(sid)
@@ -307,64 +440,28 @@ async def get_chat_history(sid, data):
             await sio.emit('error', {'message': 'Not authenticated. Please reconnect.'}, room=sid)
             return
         
-        friend_nickname = data.get('friend_nickname')
-        page = data.get('page', 1)
-        page_size = data.get('page_size', 50)
-        
-        if not friend_nickname:
-            await sio.emit('error', {'message': 'friend_nickname is required'}, room=sid)
-            return
-        
         # Get database session
         async for session in get_db_session():
             try:
-                # Get chat history
-                history = await ChatService.get_chat_history(
+                # Get recent conversations
+                conversations = await ChatService.get_recent_conversations(
                     session=session,
                     user_id=user_id,
-                    friend_nickname=friend_nickname,
-                    page=page,
-                    page_size=page_size
+                    limit=50
                 )
                 
-                # Send chat history
-                await sio.emit('chat_history', history, room=sid)
+                # Send conversations list
+                await sio.emit('recent_conversations', {
+                    'conversations': conversations
+                }, room=sid)
                 
             except Exception as e:
-                logger.error(f"Error getting chat history: {str(e)}")
+                logger.error(f"Error getting recent conversations: {str(e)}")
                 await sio.emit('error', {'message': str(e)}, room=sid)
             
     except Exception as e:
-        logger.error(f"Error in get_chat_history: {str(e)}")
-        await sio.emit('error', {'message': f'Failed to get chat history: {str(e)}'}, room=sid)
-
-
-@sio.event
-async def typing(sid, data):
-    """
-    Notify friend that user is typing
-    
-    Expected data:
-    {
-        "friend_id": 456
-    }
-    """
-    try:
-        user_id = manager.get_user_id(sid)
-        if not user_id:
-            return
-        
-        friend_id = data.get('friend_id')
-        if not friend_id:
-            return
-        
-        # Send typing indicator to friend if online
-        friend_sid = manager.get_sid(friend_id)
-        if friend_sid:
-            await sio.emit('user_typing', {'user_id': user_id}, room=friend_sid)
-            
-    except Exception as e:
-        logger.error(f"Error in typing: {str(e)}")
+        logger.error(f"Error in get_recent_conversations: {str(e)}")
+        await sio.emit('error', {'message': f'Failed to get recent conversations: {str(e)}'}, room=sid)
 
 
 # Create ASGI application

@@ -6,25 +6,46 @@ from typing import Optional
 
 
 class ChatMessageCreate(BaseModel):
-    """Schema for creating a chat message"""
-    content: str = Field(..., min_length=1, max_length=10000)
+    """Schema for creating a chat message via Socket.IO"""
+    friend_nickname: str
+    content: Optional[str] = None  # Optional if image_path is provided
+    image_path: Optional[str] = None  # Optional if content is provided
 
 
 class ChatMessageResponse(BaseModel):
     """Schema for chat message response"""
+    id: int
+    sender_id: int
     sender_nickname: str
-    content: str
-    created_at: datetime
+    content: Optional[str]
+    image_url: Optional[str]
+    created_at: str  # ISO format datetime string
     is_mine: bool  # True if the message was sent by the current user
     
     model_config = ConfigDict(from_attributes=True)
 
 
 class ChatHistoryResponse(BaseModel):
-    """Schema for paginated chat history response"""
+    """Schema for cursor-based paginated chat history response"""
     messages: list[ChatMessageResponse]
     total: int
-    page: int
-    page_size: int
-    total_pages: int
+    limit: int
+    has_more: bool
+    next_cursor: Optional[int]  # ID of the oldest message in current batch
     friend_nickname: str
+
+
+class PresignedUploadRequest(BaseModel):
+    """Schema for requesting a presigned upload URL"""
+    friend_nickname: str
+    filename: str
+    content_type: str
+    content: Optional[str] = None
+
+
+class PresignedUploadResponse(BaseModel):
+    """Schema for presigned upload URL response"""
+    upload_url: str
+    object_name: str
+    image_path: str
+    expires_in_minutes: int = 15

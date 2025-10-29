@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False  # Set to True for HTTPS
     MINIO_BUCKET_NAME: str = "l2p-bucket"
     
+    # File Upload Configuration
+    MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB in bytes
+    ALLOWED_IMAGE_TYPES: list = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    IMAGE_URL_EXPIRY_HOURS: int = 24  # How long presigned image URLs are valid
     
     @property
     def DATABASE_URL(self) -> str:
