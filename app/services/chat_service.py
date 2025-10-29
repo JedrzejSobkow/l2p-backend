@@ -7,14 +7,151 @@ from sqlalchemy.orm import joinedload, aliased
 from models.chat_message import ChatMessage
 from models.friendship import Friendship
 from models.registered_user import RegisteredUser
-from schemas.chat_schema import ChatMessageResponse, ChatHistoryResponse
+from schemas.chat_schema import (
+    ChatMessageResponse, 
+    ChatHistoryResponse, 
+    PresignedUploadResponse,
+    ConversationResponse,
+    RecentConversationsResponse
+)
 from fastapi import HTTPException, status
 from infrastructure.minio_connection import minio_connection
 from config.settings import settings
+import uuid
+from datetime import datetime as dt
 
 
 class ChatService:
     """Service for managing chat messages between friends"""
+    
+    @staticmethod
+    async def generate_image_upload_url(
+        session: AsyncSession,
+        user_id: int,
+        friend_id: int,
+        filename: str,
+        content_type: str
+    ) -> PresignedUploadResponse:
+        """
+        Generate presigned upload URL for chat image
+        
+        Args:
+            session: Database session
+            user_id: ID of the current user
+            friend_id: ID of the friend
+            filename: Original filename
+            content_type: MIME type of the image
+            
+        Returns:
+            Dictionary with upload_url, object_name, image_path, and expires_in_minutes
+            
+        Raises:
+            ValueError: If content type is invalid
+            HTTPException: If friendship not found or user not authorized
+        """
+        # Validate content type
+        if content_type not in settings.ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid image type. Allowed types: {', '.join(settings.ALLOWED_IMAGE_TYPES)}"
+            )
+        
+        # Verify friendship exists
+        friendship, _, _ = await ChatService.get_friendship_by_id(
+            session=session,
+            user_id=user_id,
+            friend_id=friend_id
+        )
+        
+        # Generate unique filename
+        file_extension = filename.split('.')[-1] if '.' in filename else 'jpg'
+        object_name = f"chat-images/{friendship.id_friendship}/{dt.utcnow().strftime('%Y%m%d')}/{uuid.uuid4()}.{file_extension}"
+        
+        # Generate presigned URL
+        try:
+            upload_url = minio_connection.get_presigned_upload_url(
+                object_name=object_name,
+                expires_minutes=15
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate upload URL: {str(e)}"
+            )
+        
+        image_path = f"{settings.MINIO_BUCKET_NAME}/{object_name}"
+        
+        return {
+            "upload_url": upload_url,
+            "object_name": object_name,
+            "image_path": image_path,
+            "expires_in_minutes": 15
+        }
+    
+    @staticmethod
+    async def get_friendship_by_id(
+        session: AsyncSession,
+        user_id: int,
+        friend_id: int
+    ) -> Tuple[Friendship, RegisteredUser, RegisteredUser]:
+        """
+        Get friendship between two users using friend's ID
+        
+        Args:
+            session: Database session
+            user_id: ID of the current user
+            friend_id: ID of the friend
+            
+        Returns:
+            Tuple of (Friendship, current_user, friend_user)
+            
+        Raises:
+            HTTPException: If friend not found or not friends with current user
+        """
+        # Get both users in a single query using joined load
+        users_query = select(RegisteredUser).where(
+            RegisteredUser.id.in_([user_id, friend_id]),
+            RegisteredUser.is_active == True
+        )
+        result = await session.execute(users_query)
+        users = result.scalars().all()
+        
+        if len(users) != 2:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or both users not found"
+            )
+        
+        current_user = next((u for u in users if u.id == user_id), None)
+        friend = next((u for u in users if u.id == friend_id), None)
+        
+        # Check if friendship exists (in either direction) and is accepted
+        friendship_query = select(Friendship).where(
+            and_(
+                or_(
+                    and_(
+                        Friendship.user_id_1 == user_id,
+                        Friendship.user_id_2 == friend_id
+                    ),
+                    and_(
+                        Friendship.user_id_1 == friend_id,
+                        Friendship.user_id_2 == user_id
+                    )
+                ),
+                Friendship.status == "accepted"
+            )
+        )
+        
+        result = await session.execute(friendship_query)
+        friendship = result.scalar_one_or_none()
+        
+        if not friendship:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be friends with this user to chat"
+            )
+        
+        return friendship, current_user, friend
     
     @staticmethod
     async def get_friendship(
@@ -129,7 +266,7 @@ class ChatService:
     async def get_chat_history(
         session: AsyncSession,
         user_id: int,
-        friend_nickname: str,
+        friend_id: int,
         before_message_id: Optional[int] = None,
         limit: int = 50
     ) -> ChatHistoryResponse:
@@ -144,7 +281,7 @@ class ChatService:
         Args:
             session: Database session
             user_id: ID of the current user
-            friend_nickname: Nickname of the friend
+            friend_id: ID of the friend
             before_message_id: Get messages before this message ID (for pagination)
             limit: Maximum number of messages to return
             
@@ -152,8 +289,8 @@ class ChatService:
             ChatHistoryResponse with messages and pagination info
         """
         # Get friendship
-        friendship, current_user, friend = await ChatService.get_friendship(
-            session, user_id, friend_nickname
+        friendship, current_user, friend = await ChatService.get_friendship_by_id(
+            session, user_id, friend_id
         )
         
         # Count total messages (useful for UI)
@@ -208,6 +345,7 @@ class ChatService:
             limit=limit,
             has_more=has_more,
             next_cursor=next_cursor,
+            friend_user_id=friend.id,
             friend_nickname=friend.nickname
         )
     
@@ -250,7 +388,7 @@ class ChatService:
         session: AsyncSession,
         user_id: int,
         limit: int = 20
-    ) -> List[dict]:
+    ) -> RecentConversationsResponse:
         """
         Get user's recent conversations sorted by last message time
         
@@ -260,7 +398,7 @@ class ChatService:
             limit: Maximum number of conversations to return
             
         Returns:
-            List of conversation dictionaries with friend info and last message
+            RecentConversationsResponse with list of conversations
         """
         # Subquery to get the last message for each friendship
         last_message_subq = (
@@ -328,18 +466,18 @@ class ChatService:
             # For now, we'll just return all info without read tracking
             unread_count = 0  # TODO: Implement read tracking if needed
             
-            conversations.append({
-                'friendship_id': friendship.id_friendship,
-                'friend_id': friend.id,
-                'friend_nickname': friend.nickname,
-                'friend_email': friend.email,
-                'last_message_time': last_time.isoformat() if last_time else None,
-                'last_message_content': last_content,
-                'last_message_is_mine': last_sender == user_id if last_sender else None,
-                'unread_count': unread_count
-            })
+            conversations.append(ConversationResponse(
+                friendship_id=friendship.id_friendship,
+                friend_id=friend.id,
+                friend_nickname=friend.nickname,
+                friend_email=friend.email,
+                last_message_time=last_time.isoformat() if last_time else None,
+                last_message_content=last_content,
+                last_message_is_mine=last_sender == user_id if last_sender else None,
+                unread_count=unread_count
+            ))
         
-        return conversations
+        return RecentConversationsResponse(conversations=conversations)
     
     @staticmethod
     def validate_image_path(image_path: str, friendship_id: int, verify_exists: bool = True) -> bool:

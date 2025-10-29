@@ -3,8 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from api.routes import default, auth, friendship
-from api.routes.chat import sio, router as chat_router
+from api.routes import default, auth, friendship, chat
 from infrastructure.redis_connection import redis_connection
 from infrastructure.postgres_connection import postgres_connection
 from infrastructure.minio_connection import minio_connection
@@ -45,9 +44,13 @@ app.include_router(default.router, prefix="/v1")
 app.include_router(auth.auth_router, prefix="/v1")
 app.include_router(auth.users_router, prefix="/v1")
 app.include_router(friendship.friendship_router, prefix="/v1")
-app.include_router(chat_router, prefix="/v1")
+app.include_router(chat.router, prefix="/v1")
+
+# Import Socket.IO instance and register all namespaces
+from api.socketio import sio
 
 # Wrap FastAPI app with Socket.IO
 # This allows Socket.IO to handle /socket.io/* paths and pass everything else to FastAPI
+# Namespaces are registered in api/socketio/__init__.py
 app = socketio.ASGIApp(sio, app)
 

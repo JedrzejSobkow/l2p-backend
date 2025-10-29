@@ -7,7 +7,7 @@ from typing import Optional
 
 class ChatMessageCreate(BaseModel):
     """Schema for creating a chat message via Socket.IO"""
-    friend_nickname: str
+    friend_user_id: int
     content: Optional[str] = None  # Optional if image_path is provided
     image_path: Optional[str] = None  # Optional if content is provided
 
@@ -32,12 +32,13 @@ class ChatHistoryResponse(BaseModel):
     limit: int
     has_more: bool
     next_cursor: Optional[int]  # ID of the oldest message in current batch
-    friend_nickname: str
+    friend_user_id: int
+    friend_nickname: str 
 
 
 class PresignedUploadRequest(BaseModel):
     """Schema for requesting a presigned upload URL"""
-    friend_nickname: str
+    friend_user_id: int
     filename: str
     content_type: str
     content: Optional[str] = None
@@ -49,3 +50,20 @@ class PresignedUploadResponse(BaseModel):
     object_name: str
     image_path: str
     expires_in_minutes: int = 15
+
+
+class ConversationResponse(BaseModel):
+    """Schema for a single conversation in the recent conversations list"""
+    friendship_id: int
+    friend_id: int
+    friend_nickname: str
+    friend_email: str
+    last_message_time: Optional[str] = None  # ISO format datetime string
+    last_message_content: Optional[str] = None
+    last_message_is_mine: Optional[bool] = None
+    unread_count: int = 0
+
+
+class RecentConversationsResponse(BaseModel):
+    """Schema for recent conversations list response"""
+    conversations: list[ConversationResponse]
