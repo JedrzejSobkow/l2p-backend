@@ -7,7 +7,7 @@ from sqlalchemy.orm import joinedload
 from models.friendship import Friendship
 from models.registered_user import RegisteredUser
 from schemas.friendship_schema import FriendshipWithUser, UserSearchResult
-from fastapi import HTTPException, status
+from exceptions.domain_exceptions import NotFoundException, BadRequestException, ConflictException
 
 
 class FriendshipService:
@@ -31,7 +31,9 @@ class FriendshipService:
             Created friendship object
             
         Raises:
-            HTTPException: If users are the same, recipient doesn't exist, or friendship already exists
+            NotFoundException: If recipient doesn't exist
+            BadRequestException: If users are the same
+            ConflictException: If friendship already exists
         """
         # Check if recipient exists and is active
         recipient_query = select(RegisteredUser).where(
@@ -42,16 +44,15 @@ class FriendshipService:
         recipient = result.scalar_one_or_none()
         
         if not recipient:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {recipient_id} not found"
+            raise NotFoundException(
+                message="User not found",
+                details={"user_id": recipient_id}
             )
         
         # Check if trying to friend themselves
         if requester_id == recipient.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot send friend request to yourself"
+            raise BadRequestException(
+                message="Cannot send friend request to yourself"
             )
         
         # Check if friendship already exists (in either direction)
@@ -72,14 +73,14 @@ class FriendshipService:
         
         if existing_friendship:
             if existing_friendship.status == "pending":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Friend request already pending"
+                raise ConflictException(
+                    message="Friend request already pending",
+                    details={"friendship_id": existing_friendship.id}
                 )
             elif existing_friendship.status == "accepted":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Users are already friends"
+                raise ConflictException(
+                    message="Users are already friends",
+                    details={"friendship_id": existing_friendship.id}
                 )
         
         # Create new friendship with pending status
@@ -113,7 +114,8 @@ class FriendshipService:
             Updated friendship object
             
         Raises:
-            HTTPException: If requester not found, friendship not found, not pending, or user is not the recipient
+            NotFoundException: If requester or friendship not found
+            BadRequestException: If friendship is not pending
         """
         # Get the requester
         requester_query = select(RegisteredUser).where(
@@ -124,9 +126,9 @@ class FriendshipService:
         requester = result.scalar_one_or_none()
         
         if not requester:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {requester_id} not found"
+            raise NotFoundException(
+                message="User not found",
+                details={"user_id": requester_id}
             )
         
         # Get the friendship where requester is user_id_1 and recipient is user_id_2
@@ -140,16 +142,16 @@ class FriendshipService:
         friendship = result.scalar_one_or_none()
         
         if not friendship:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Friend request not found"
+            raise NotFoundException(
+                message="Friend request not found",
+                details={"requester_id": requester_id, "recipient_id": recipient_id}
             )
         
         # Check if request is pending
         if friendship.status != "pending":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Friend request is not pending (current status: {friendship.status})"
+            raise BadRequestException(
+                message="Friend request is not pending",
+                details={"current_status": friendship.status, "friendship_id": friendship.id}
             )
         
         # Update status to accepted
@@ -174,7 +176,7 @@ class FriendshipService:
             friend_id: ID of the friend to remove
             
         Raises:
-            HTTPException: If friend not found, friendship not found, or user is not part of the friendship
+            NotFoundException: If friend or friendship not found
         """
         # Get the friend
         friend_query = select(RegisteredUser).where(
@@ -185,9 +187,9 @@ class FriendshipService:
         friend = result.scalar_one_or_none()
         
         if not friend:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {friend_id} not found"
+            raise NotFoundException(
+                message="User not found",
+                details={"user_id": friend_id}
             )
         
         # Get the friendship (in either direction)
@@ -207,9 +209,9 @@ class FriendshipService:
         friendship = result.scalar_one_or_none()
         
         if not friendship:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Friendship not found"
+            raise NotFoundException(
+                message="Friendship not found",
+                details={"user_id": user_id, "friend_id": friend_id}
             )
         
         # Delete the friendship
@@ -297,13 +299,13 @@ class FriendshipService:
             Tuple of (list of users, total count)
             
         Raises:
-            HTTPException: If search query is too short
+            BadRequestException: If search query is too short
         """
         # Validate search query length
         if len(search_query.strip()) < 3:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Search query must be at least 3 characters"
+            raise BadRequestException(
+                message="Search query must be at least 3 characters",
+                details={"query_length": len(search_query.strip()), "minimum_length": 3}
             )
         
         # Build query to search by nickname (case-insensitive)

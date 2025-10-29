@@ -14,7 +14,13 @@ from schemas.chat_schema import (
     ConversationResponse,
     RecentConversationsResponse
 )
-from fastapi import HTTPException, status
+from exceptions.domain_exceptions import (
+    NotFoundException,
+    BadRequestException,
+    ForbiddenException,
+    ValidationException,
+    InternalServerException
+)
 from infrastructure.minio_connection import minio_connection
 from config.settings import settings
 import uuid
@@ -46,14 +52,18 @@ class ChatService:
             Dictionary with upload_url, object_name, image_path, and expires_in_minutes
             
         Raises:
-            ValueError: If content type is invalid
-            HTTPException: If friendship not found or user not authorized
+            ValidationException: If content type is invalid
+            NotFoundException: If friendship not found
+            ForbiddenException: If user not authorized
         """
         # Validate content type
         if content_type not in settings.ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid image type. Allowed types: {', '.join(settings.ALLOWED_IMAGE_TYPES)}"
+            raise ValidationException(
+                message="Invalid image type",
+                details={
+                    "content_type": content_type,
+                    "allowed_types": settings.ALLOWED_IMAGE_TYPES
+                }
             )
         
         # Verify friendship exists
@@ -74,9 +84,9 @@ class ChatService:
                 expires_minutes=15
             )
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to generate upload URL: {str(e)}"
+            raise InternalServerException(
+                message="Failed to generate upload URL",
+                details={"error": str(e)}
             )
         
         image_path = f"{settings.MINIO_BUCKET_NAME}/{object_name}"
@@ -106,7 +116,8 @@ class ChatService:
             Tuple of (Friendship, current_user, friend_user)
             
         Raises:
-            HTTPException: If friend not found or not friends with current user
+            NotFoundException: If friend not found
+            ForbiddenException: If not friends with current user
         """
         # Get both users in a single query using joined load
         users_query = select(RegisteredUser).where(
@@ -117,9 +128,9 @@ class ChatService:
         users = result.scalars().all()
         
         if len(users) != 2:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="One or both users not found"
+            raise NotFoundException(
+                message="One or both users not found",
+                details={"user_id": user_id, "friend_id": friend_id}
             )
         
         current_user = next((u for u in users if u.id == user_id), None)
@@ -146,9 +157,9 @@ class ChatService:
         friendship = result.scalar_one_or_none()
         
         if not friendship:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You must be friends with this user to chat"
+            raise ForbiddenException(
+                message="You must be friends with this user to chat",
+                details={"user_id": user_id, "friend_id": friend_id}
             )
         
         return friendship, current_user, friend
@@ -176,9 +187,8 @@ class ChatService:
         """
         # Validate that at least content or image is provided
         if not content and not image_path:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either content or image must be provided"
+            raise BadRequestException(
+                message="Either content or image must be provided"
             )
         
         # Create message
@@ -431,7 +441,9 @@ class ChatService:
             True if valid
             
         Raises:
-            HTTPException: If path is invalid or doesn't match friendship
+            ValidationException: If path is invalid
+            ForbiddenException: If path doesn't match friendship
+            NotFoundException: If image file not found
         """
         if not image_path:
             return True  # No image is fine
@@ -441,38 +453,38 @@ class ChatService:
         
         # Validate structure
         if len(parts) < 5:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid image_path format"
+            raise ValidationException(
+                message="Invalid image_path format",
+                details={"image_path": image_path}
             )
         
         # Check bucket name
         if parts[0] != settings.MINIO_BUCKET_NAME:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid bucket in image_path"
+            raise ValidationException(
+                message="Invalid bucket in image_path",
+                details={"expected_bucket": settings.MINIO_BUCKET_NAME, "actual_bucket": parts[0]}
             )
         
         # Check it's in chat-images directory
         if parts[1] != "chat-images":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: must be in chat-images directory"
+            raise ValidationException(
+                message="Invalid path: must be in chat-images directory",
+                details={"image_path": image_path}
             )
         
         # Check friendship ID matches
         try:
             path_friendship_id = int(parts[2])
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid friendship_id in image_path"
+            raise ValidationException(
+                message="Invalid friendship_id in image_path",
+                details={"image_path": image_path}
             )
         
         if path_friendship_id != friendship_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Image path does not belong to this conversation"
+            raise ForbiddenException(
+                message="Image path does not belong to this conversation",
+                details={"expected_friendship_id": friendship_id, "actual_friendship_id": path_friendship_id}
             )
         
         # Optionally verify file exists in MinIO
@@ -480,12 +492,12 @@ class ChatService:
             object_name = image_path.replace(f"{settings.MINIO_BUCKET_NAME}/", "")
             try:
                 if not minio_connection.file_exists(object_name):
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Image file not found in storage"
+                    raise NotFoundException(
+                        message="Image file not found in storage",
+                        details={"object_name": object_name}
                     )
-            except HTTPException:
-                raise  # Re-raise HTTP exceptions
+            except (NotFoundException, ValidationException, ForbiddenException):
+                raise  # Re-raise domain exceptions
             except Exception as e:
                 # Log but don't fail on storage check errors
                 import logging
@@ -515,7 +527,9 @@ class ChatService:
             Dictionary containing message data, sender info, and recipient info
             
         Raises:
-            HTTPException: If validation fails or users not found
+            ValidationException: If validation fails
+            NotFoundException: If users not found
+            ForbiddenException: If users are not friends
         """
         # Get friendship and user details
         friendship, current_user, friend = await ChatService.get_friendship_by_id(

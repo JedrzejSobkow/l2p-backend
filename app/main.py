@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from api.routes import default, auth, friendship, chat
+from api.exception_handlers import register_exception_handlers
 from infrastructure.redis_connection import redis_connection
 from infrastructure.postgres_connection import postgres_connection
 from infrastructure.minio_connection import minio_connection
@@ -31,6 +32,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Register domain exception handlers
+register_exception_handlers(app)
 
 app.add_middleware(
     middleware_class=CORSMiddleware,
