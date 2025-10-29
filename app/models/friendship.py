@@ -20,8 +20,8 @@ class Friendship(Base):
     user_1 = relationship("RegisteredUser", foreign_keys=[user_id_1])
     user_2 = relationship("RegisteredUser", foreign_keys=[user_id_2])
     
-    # Relationship to FriendChat model (one-to-one)
-    friend_chat = relationship("FriendChat", back_populates="friendship", uselist=False)
+    # Relationship to ChatMessage model (one-to-many)
+    messages = relationship("ChatMessage", back_populates="friendship", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Friendship(id_friendship={self.id_friendship}, user_1={self.user_id_1}, user_2={self.user_id_2}, status='{self.status}')>"

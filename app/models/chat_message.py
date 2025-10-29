@@ -7,18 +7,19 @@ from infrastructure.postgres_connection import Base
 
 
 class ChatMessage(Base):
-    """Chat message model for storing messages in friend chats"""
+    """Chat message model for storing messages between friends"""
     __tablename__ = "chat_messages"
     
     id_message = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    friend_chat_id = Column(Integer, ForeignKey("friend_chats.id_friend_chat"), nullable=False, index=True)
+    friendship_id = Column(Integer, ForeignKey("friendships.id_friendship"), nullable=False, index=True)
     sender_id = Column(Integer, ForeignKey("registered_users.id"), nullable=False, index=True)
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=True)  # Nullable for image-only messages
+    image_path = Column(String(500), nullable=True)  # Path to image in MinIO
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     
     # Relationships
-    friend_chat = relationship("FriendChat", back_populates="messages")
+    friendship = relationship("Friendship", back_populates="messages")
     sender = relationship("RegisteredUser")
     
     def __repr__(self):
-        return f"<ChatMessage(id_message={self.id_message}, friend_chat_id={self.friend_chat_id}, sender_id={self.sender_id})>"
+        return f"<ChatMessage(id_message={self.id_message}, friendship_id={self.friendship_id}, sender_id={self.sender_id})>"

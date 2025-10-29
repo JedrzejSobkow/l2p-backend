@@ -12,19 +12,9 @@ from schemas.friendship_schema import (
     UserSearchResult
 )
 from services.friendship_service import FriendshipService
-from infrastructure.postgres_connection import postgres_connection
+from infrastructure.postgres_connection import get_db_session
 from api.routes.auth import current_active_user
 import math
-
-
-# Dependency to get database session
-async def get_db_session():
-    """Get database session"""
-    if not postgres_connection.session_factory:
-        raise RuntimeError("Database not connected")
-    
-    async with postgres_connection.session_factory() as session:
-        yield session
 
 
 # Create router
