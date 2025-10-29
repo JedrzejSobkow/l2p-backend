@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB in bytes
     ALLOWED_IMAGE_TYPES: list = ["image/jpeg", "image/png", "image/gif", "image/webp"]
     IMAGE_URL_EXPIRY_HOURS: int = 24  # How long presigned image URLs are valid
+      
+    # Email Configuration (Resend API)
+    RESEND_API_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE" # Must be changed in .env file!
+    EMAIL_FROM: str = "L2P <noreply@rychu777.com>"  # Your verified domain
+    FRONTEND_URL: str = "http://localhost:5173"  # Frontend URL for verification links #TODO ADD REDIRECT
     
     @property
     def DATABASE_URL(self) -> str:
