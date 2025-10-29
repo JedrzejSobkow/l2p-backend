@@ -154,73 +154,6 @@ class ChatService:
         return friendship, current_user, friend
     
     @staticmethod
-    async def get_friendship(
-        session: AsyncSession,
-        user_id: int,
-        friend_nickname: str
-    ) -> Tuple[Friendship, RegisteredUser, RegisteredUser]:
-        """
-        Get friendship between two users
-        
-        Args:
-            session: Database session
-            user_id: ID of the current user
-            friend_nickname: Nickname of the friend
-            
-        Returns:
-            Tuple of (Friendship, current_user, friend_user)
-            
-        Raises:
-            HTTPException: If friend not found or not friends with current user
-        """
-        # Get friend by nickname
-        friend_query = select(RegisteredUser).where(
-            RegisteredUser.nickname == friend_nickname,
-            RegisteredUser.is_active == True
-        )
-        result = await session.execute(friend_query)
-        friend = result.scalar_one_or_none()
-        
-        if not friend:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with nickname '{friend_nickname}' not found"
-            )
-        
-        # Get current user
-        current_user_query = select(RegisteredUser).where(RegisteredUser.id == user_id)
-        result = await session.execute(current_user_query)
-        current_user = result.scalar_one_or_none()
-        
-        # Check if friendship exists (in either direction) and is accepted
-        friendship_query = select(Friendship).where(
-            and_(
-                or_(
-                    and_(
-                        Friendship.user_id_1 == user_id,
-                        Friendship.user_id_2 == friend.id
-                    ),
-                    and_(
-                        Friendship.user_id_1 == friend.id,
-                        Friendship.user_id_2 == user_id
-                    )
-                ),
-                Friendship.status == "accepted"
-            )
-        )
-        
-        result = await session.execute(friendship_query)
-        friendship = result.scalar_one_or_none()
-        
-        if not friendship:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You must be friends with this user to chat"
-            )
-        
-        return friendship, current_user, friend
-    
-    @staticmethod
     async def save_message(
         session: AsyncSession,
         friendship_id: int,
@@ -559,6 +492,76 @@ class ChatService:
                 logging.warning(f"Could not verify file existence for {object_name}: {e}")
         
         return True
+    
+    @staticmethod
+    async def process_send_message(
+        session: AsyncSession,
+        user_id: int,
+        friend_user_id: int,
+        content: Optional[str] = None,
+        image_path: Optional[str] = None
+    ) -> dict:
+        """
+        Process sending a message
+        
+        Args:
+            session: Database session
+            user_id: ID of the message sender
+            friend_user_id: ID of the recipient
+            content: Message content (optional if image is provided)
+            image_path: Path to uploaded image (optional if content is provided)
+            
+        Returns:
+            Dictionary containing message data, sender info, and recipient info
+            
+        Raises:
+            HTTPException: If validation fails or users not found
+        """
+        # Get friendship and user details
+        friendship, current_user, friend = await ChatService.get_friendship_by_id(
+            session=session,
+            user_id=user_id,
+            friend_id=friend_user_id
+        )
+        
+        # Validate image_path if provided
+        if image_path:
+            ChatService.validate_image_path(image_path, friendship.id_friendship)
+        
+        # Save message to database
+        message = await ChatService.save_message(
+            session=session,
+            friendship_id=friendship.id_friendship,
+            sender_id=user_id,
+            content=content,
+            image_path=image_path
+        )
+        
+        # Get image URL if image_path is provided
+        image_url = None
+        if image_path:
+            image_url = ChatService._get_image_url(image_path)
+        
+        # Return all data needed for socket emission
+        return {
+            'message': {
+                'id': message.id_message,
+                'sender_id': user_id,
+                'sender_nickname': current_user.nickname,
+                'content': content,
+                'image_url': image_url,
+                'created_at': message.created_at.isoformat(),
+                'friendship_id': friendship.id_friendship
+            },
+            'sender': {
+                'id': current_user.id,
+                'nickname': current_user.nickname
+            },
+            'recipient': {
+                'id': friend.id,
+                'nickname': friend.nickname
+            }
+        }
     
     @staticmethod
     def _get_image_url(image_path: str) -> Optional[str]:

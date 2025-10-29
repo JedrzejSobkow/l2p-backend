@@ -5,11 +5,6 @@ from datetime import datetime
 from typing import Optional
 
 
-class ChatMessageCreate(BaseModel):
-    """Schema for creating a chat message via Socket.IO"""
-    friend_user_id: int
-    content: Optional[str] = None  # Optional if image_path is provided
-    image_path: Optional[str] = None  # Optional if content is provided
 
 
 class ChatMessageResponse(BaseModel):
@@ -67,3 +62,41 @@ class ConversationResponse(BaseModel):
 class RecentConversationsResponse(BaseModel):
     """Schema for recent conversations list response"""
     conversations: list[ConversationResponse]
+
+
+# Socket.IO Event DTOs 
+
+class SendChatMessageEvent(BaseModel):
+    """Schema for send_message Socket.IO event"""
+    friend_user_id: int
+    content: Optional[str] = None  # Optional if image_path is provided
+    image_path: Optional[str] = None  # Optional if content is provided
+
+
+class TypingIndicatorEvent(BaseModel):
+    """Schema for typing Socket.IO event"""
+    friend_user_id: int = Field(..., description="User ID of the friend to notify")
+
+
+# Socket.IO Response Models
+
+class SocketErrorResponse(BaseModel):
+    """Schema for error responses emitted via Socket.IO"""
+    message: str
+    errors: Optional[list] = None
+
+
+class ConversationUpdatedResponse(BaseModel):
+    """Schema for conversation_updated event"""
+    friendship_id: int
+    friend_id: int
+    friend_nickname: str
+    last_message_time: str
+    last_message_content: Optional[str]
+    last_message_is_mine: bool
+
+
+class UserTypingResponse(BaseModel):
+    """Schema for user_typing event"""
+    user_id: int
+    nickname: str

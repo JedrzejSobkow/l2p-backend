@@ -1,6 +1,6 @@
 # app/api/routes/chat.py
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from infrastructure.postgres_connection import get_db_session
 from services.chat_service import ChatService

@@ -5,12 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 
-class FriendshipBase(BaseModel):
-    """Base schema for friendship"""
-    pass
-
-
-class FriendshipCreate(FriendshipBase):
+class FriendshipCreate(BaseModel):
     """Schema for creating a friendship (friend request)"""
     friend_user_id: int
 

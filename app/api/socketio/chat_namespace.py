@@ -4,8 +4,17 @@ import socketio
 from infrastructure.socketio_manager import sio, manager, AuthNamespace
 from infrastructure.postgres_connection import get_db_session
 from services.chat_service import ChatService
-from sqlalchemy import select
 from models.registered_user import RegisteredUser
+from schemas.chat_schema import (
+    SendChatMessageEvent, 
+    TypingIndicatorEvent,
+    ChatMessageResponse,
+    ConversationUpdatedResponse,
+    UserTypingResponse,
+    SocketErrorResponse
+)
+from pydantic import ValidationError
+from fastapi import HTTPException
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,13 +30,7 @@ class ChatNamespace(AuthNamespace):
         `authenticate_user`.
         """
         logger.info(f"Client authenticated and connected to /chat: {sid} (User: {user.id}, Email: {user.email})")
-        # Emit a richer connected payload (includes nickname)
-        await self.emit('connected', {
-            'message': 'Connected to chat server',
-            'user_id': user.id,
-            'email': user.email,
-            'nickname': user.nickname
-        }, room=sid)
+        
     
     async def on_send_message(self, sid, data):
         """
@@ -38,131 +41,121 @@ class ChatNamespace(AuthNamespace):
         1. get_upload_url (HTTP) - Get presigned URL
         2. Upload directly to MinIO
         3. send_message (this event) - Save message with image_path
-        
-        Expected data:
-        {
-            "friend_user_id": 123,  // User ID of the friend
-            "content": "Hello!",  // Optional if image_path is provided
-            "image_path": "bucket/path/to/image.jpg"  // Optional, from get_upload_url
-        }
         """
         try:
-            user_id = manager.get_user_id(sid)
-            if not user_id:
-                await self.emit('error', {'message': 'Not authenticated. Please reconnect.'}, room=sid)
+            # Validate input data using DTO
+            try:
+                message_dto = SendChatMessageEvent(**data)
+            except ValidationError as e:
+                error_response = SocketErrorResponse(
+                    message='Invalid data format',
+                    errors=e.errors()
+                )
+                await self.emit('error', error_response.model_dump(), room=sid)
                 return
             
-            friend_user_id = data.get('friend_user_id')
-            content = data.get('content')
-            image_path = data.get('image_path')
-            
-            if not friend_user_id:
-                await self.emit('error', {'message': 'friend_user_id is required'}, room=sid)
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = SocketErrorResponse(message='Not authenticated. Please reconnect.')
+                await self.emit('error', error_response.model_dump(), room=sid)
                 return
             
             # Either content or image_path must be provided
-            if not content and not image_path:
-                await self.emit('error', {'message': 'Either content or image_path is required'}, room=sid)
+            if not message_dto.content and not message_dto.image_path:
+                error_response = SocketErrorResponse(message='Either content or image_path is required')
+                await self.emit('error', error_response.model_dump(), room=sid)
                 return
             
             # Get database session
             async for session in get_db_session():
                 try:
-                    # Get friendship
-                    friendship, current_user, friend = await ChatService.get_friendship_by_id(
+                    # Process message sending 
+                    result = await ChatService.process_send_message(
                         session=session,
                         user_id=user_id,
-                        friend_id=friend_user_id
+                        friend_user_id=message_dto.friend_user_id,
+                        content=message_dto.content,
+                        image_path=message_dto.image_path
                     )
                     
-                    # Validate image_path if provided
-                    if image_path:
-                        ChatService.validate_image_path(image_path, friendship.id_friendship)
+                    message_data = result['message']
+                    sender = result['sender']
+                    recipient = result['recipient']
                     
-                    # Save message to database
-                    message = await ChatService.save_message(
-                        session=session,
-                        friendship_id=friendship.id_friendship,
-                        sender_id=user_id,
-                        content=content,
-                        image_path=image_path
+                    # Build message event response
+                    message_response = ChatMessageResponse(
+                        id=message_data['id'],
+                        sender_id=message_data['sender_id'],
+                        sender_nickname=message_data['sender_nickname'],
+                        content=message_data['content'],
+                        image_url=message_data['image_url'],
+                        created_at=message_data['created_at'],
+                        is_mine=True
                     )
-                    
-                    # Get image URL if image_path is provided
-                    image_url = None
-                    if image_path:
-                        image_url = ChatService._get_image_url(image_path)
-                    
-                    # Prepare message data
-                    message_data = {
-                        'id': message.id_message,
-                        'sender_id': user_id,
-                        'sender_nickname': current_user.nickname,
-                        'content': content,
-                        'image_url': image_url,
-                        'created_at': message.created_at.isoformat(),
-                        'friendship_id': friendship.id_friendship
-                    }
                     
                     # Send to sender (confirmation)
-                    await self.emit('message', {
-                        **message_data,
-                        'is_mine': True
-                    }, room=sid)
+                    await self.emit('message', message_response.model_dump(), room=sid)
                     
                     # Send to recipient if online
-                    friend_sid = manager.get_sid(friend.id)
+                    friend_sid = manager.get_sid(recipient['id'])
                     if friend_sid:
-                        await self.emit('message', {
-                            **message_data,
-                            'is_mine': False
-                        }, room=friend_sid)
-                        logger.info(f"Message sent to online user {friend.id}")
+                        # Update is_mine for recipient
+                        message_response.is_mine = False
+                        await self.emit('message', message_response.model_dump(), room=friend_sid)
+                        logger.info(f"Message sent to online user {recipient['id']}")
                         
-                        # Emit lightweight conversation update to friend
-                        await self.emit('conversation_updated', {
-                            'friendship_id': friendship.id_friendship,
-                            'friend_id': user_id,
-                            'friend_nickname': current_user.nickname,
-                            'last_message_time': message.created_at.isoformat(),
-                            'last_message_content': content,
-                            'last_message_is_mine': False
-                        }, room=friend_sid)
+                        # Emit conversation update to recipient
+                        conversation_update = ConversationUpdatedResponse(
+                            friendship_id=message_data['friendship_id'],
+                            friend_id=sender['id'],
+                            friend_nickname=sender['nickname'],
+                            last_message_time=message_data['created_at'],
+                            last_message_content=message_dto.content,
+                            last_message_is_mine=False
+                        )
+                        await self.emit('conversation_updated', conversation_update.model_dump(), room=friend_sid)
                     else:
-                        logger.info(f"User {friend.id} is offline, message saved to database")
+                        logger.info(f"User {recipient['id']} is offline, message saved to database")
                     
-                    # Emit lightweight conversation update to sender
-                    await self.emit('conversation_updated', {
-                        'friendship_id': friendship.id_friendship,
-                        'friend_id': friend.id,
-                        'friend_nickname': friend.nickname,
-                        'last_message_time': message.created_at.isoformat(),
-                        'last_message_content': content,
-                        'last_message_is_mine': True
-                    }, room=sid)
+                    # Emit conversation update to sender
+                    conversation_update = ConversationUpdatedResponse(
+                        friendship_id=message_data['friendship_id'],
+                        friend_id=recipient['id'],
+                        friend_nickname=recipient['nickname'],
+                        last_message_time=message_data['created_at'],
+                        last_message_content=message_dto.content,
+                        last_message_is_mine=True
+                    )
+                    await self.emit('conversation_updated', conversation_update.model_dump(), room=sid)
                     
+                except HTTPException as e:
+                    # Handle HTTP exceptions from service layer
+                    logger.error(f"HTTP error sending message: {e.status_code} - {e.detail}")
+                    error_response = SocketErrorResponse(message=e.detail)
+                    await self.emit('error', error_response.model_dump(), room=sid)
                 except Exception as e:
                     logger.error(f"Error sending message: {str(e)}")
-                    await self.emit('error', {'message': str(e)}, room=sid)
+                    error_response = SocketErrorResponse(message=str(e))
+                    await self.emit('error', error_response.model_dump(), room=sid)
                 
         except Exception as e:
             logger.error(f"Error in send_message: {str(e)}")
-            await self.emit('error', {'message': f'Failed to send message: {str(e)}'}, room=sid)
+            error_response = SocketErrorResponse(message=f'Failed to send message: {str(e)}')
+            await self.emit('error', error_response.model_dump(), room=sid)
     
     async def on_typing(self, sid, data):
         """
         Notify friend that user is typing
-        
-        Uses cached data from the connection manager for optimal performance.
-        No database queries needed - typing indicators are ephemeral and
-        don't require strict validation.
-        
-        Expected data:
-        {
-            "friend_user_id": 123  // User ID of the friend to notify
-        }
         """
         try:
+            # Validate input data using DTO
+            try:
+                typing_dto = TypingIndicatorEvent(**data)
+            except ValidationError as e:
+                # Silently ignore invalid typing events (they're ephemeral)
+                logger.debug(f"Invalid typing indicator data: {e}")
+                return
+            
             user_id = manager.get_user_id(sid)
             if not user_id:
                 return
@@ -171,21 +164,18 @@ class ChatNamespace(AuthNamespace):
             if not user_nickname:
                 return
             
-            friend_user_id = data.get('friend_user_id')
-            if not friend_user_id:
-                return
-            
             # Check if friend is online and get their session
-            friend_sid = manager.get_sid(friend_user_id)
+            friend_sid = manager.get_sid(typing_dto.friend_user_id)
             if not friend_sid:
                 # Friend is not online, no need to send typing indicator
                 return
             
-            # Send typing indicator to friend
-            await self.emit('user_typing', {
-                'user_id': user_id,
-                'nickname': user_nickname
-            }, room=friend_sid)
+            # Build and send typing indicator to friend
+            typing_response = UserTypingResponse(
+                user_id=user_id,
+                nickname=user_nickname
+            )
+            await self.emit('user_typing', typing_response.model_dump(), room=friend_sid)
                 
         except Exception as e:
             logger.error(f"Error in typing: {str(e)}")
