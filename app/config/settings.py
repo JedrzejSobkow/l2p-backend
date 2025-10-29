@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
     JWT_LIFETIME_SECONDS: int = 3600  # 1 hour
     
+    # MinIO Configuration
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_SECURE: bool = False  # Set to True for HTTPS
+    MINIO_BUCKET_NAME: str = "l2p-bucket"
+    
+    
     @property
     def DATABASE_URL(self) -> str:
         """Construct PostgreSQL connection URL for SQLAlchemy"""

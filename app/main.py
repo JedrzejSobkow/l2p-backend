@@ -4,24 +4,31 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from api.routes import default, auth, friendship
-from api.routes.chat import sio
-from infrastructure.redis_connection import connect_redis, disconnect_redis
-from infrastructure.postgres_connection import connect_postgres, disconnect_postgres
+from api.routes.chat import sio, router as chat_router
+from infrastructure.redis_connection import redis_connection
+from infrastructure.postgres_connection import postgres_connection
+from infrastructure.minio_connection import minio_connection
 import socketio
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan events"""
     # Startup: Initialize connections
-    await connect_redis()
-    await connect_postgres()
+    await redis_connection.connect()
+    await postgres_connection.connect()
     
+    minio_connection.connect()
+
     yield
     
     # Shutdown: Close connections
-    await disconnect_postgres()
-    await disconnect_redis()
+    await postgres_connection.disconnect()
+    await redis_connection.disconnect()
+    minio_connection.disconnect()
 
 
 app = FastAPI(lifespan=lifespan)

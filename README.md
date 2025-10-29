@@ -45,18 +45,6 @@ Make sure Redis is running. If you have Docker:
 docker run -d --name redis -p 6379:6379 redis:latest
 ```
 
-Or install Redis locally and start it:
-
-```bash
-# On Ubuntu/Debian
-sudo apt-get install redis-server
-sudo systemctl start redis
-
-# On macOS
-brew install redis
-brew services start redis
-```
-
 ### 4. Start PostgreSQL
 
 Make sure PostgreSQL is running. If you have Docker:
@@ -70,25 +58,33 @@ docker run -d --name postgres \
   postgres
 ```
 
-Or install PostgreSQL locally:
+### 5. Start MinIO
+
+MinIO is used for object storage (chat images, files, etc.). Start MinIO using Docker:
 
 ```bash
-# On Ubuntu/Debian
-sudo apt-get install postgresql
-sudo systemctl start postgresql
-
-# On macOS
-brew install postgresql@16
-brew services start postgresql@16
+docker run -d --name minio \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  -v minio-data:/data \
+  quay.io/minio/minio server /data --console-address ":9001"
 ```
 
-Create the database (if not using Docker with pre-created DB):
+Access the MinIO Console at `http://localhost:9001` (login: minioadmin / minioadmin)
 
-```bash
-psql -U postgres -c "CREATE DATABASE l2p_db;"
-```
+**MinIO Environment Variables:**
 
-### 5. Run Database Migrations
+Add these to your `.env` file:
+
+- `MINIO_ENDPOINT`: MinIO server endpoint (default: localhost:9000)
+- `MINIO_ACCESS_KEY`: MinIO access key (default: minioadmin)
+- `MINIO_SECRET_KEY`: MinIO secret key (default: minioadmin)
+- `MINIO_BUCKET_NAME`: Bucket name (default: l2p-bucket)
+- `MINIO_SECURE`: Use HTTPS (default: False for local development)
+
+### 6. Run Database Migrations
 
 Initialize Alembic for database migrations (first time only):
 
