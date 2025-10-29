@@ -24,7 +24,7 @@ from exceptions.domain_exceptions import (
 from infrastructure.minio_connection import minio_connection
 from config.settings import settings
 import uuid
-from datetime import datetime as dt
+from datetime import datetime as dt, UTC
 
 
 class ChatService:
@@ -75,7 +75,7 @@ class ChatService:
         
         # Generate unique filename
         file_extension = filename.split('.')[-1] if '.' in filename else 'jpg'
-        object_name = f"chat-images/{friendship.id_friendship}/{dt.utcnow().strftime('%Y%m%d')}/{uuid.uuid4()}.{file_extension}"
+        object_name = f"chat-images/{friendship.id_friendship}/{dt.now(UTC).strftime('%Y%m%d')}/{uuid.uuid4()}.{file_extension}"
         
         # Generate presigned URL
         try:
@@ -254,13 +254,21 @@ class ChatService:
                 ChatMessage.id_message < before_message_id
             )
         
-        # Order by ID descending (newest first) and limit
+        # Order by ID descending (newest first) and fetch limit+1 to check for more
+        # We fetch one extra to determine if there are more messages beyond this page
         messages_query = messages_query.options(
             joinedload(ChatMessage.sender)
-        ).order_by(ChatMessage.id_message.desc()).limit(limit)
+        ).order_by(ChatMessage.id_message.desc()).limit(limit + 1)
         
         result = await session.execute(messages_query)
         messages = result.scalars().all()
+        
+        # Determine if there are more messages
+        has_more = len(messages) > limit
+        
+        # If we got more than limit, trim to limit
+        if has_more:
+            messages = messages[:limit]
         
         # Transform to response format using ChatMessageResponse
         message_list = [
@@ -276,11 +284,8 @@ class ChatService:
             for msg in messages
         ]
         
-        # Determine if there are more messages
-        has_more = len(messages) == limit
-        
         # Get the cursor for next page (ID of the oldest message in current batch)
-        next_cursor = messages[-1].id_message if messages else None
+        next_cursor = messages[-1].id_message if (messages and has_more) else None
         
         return ChatHistoryResponse(
             messages=message_list,

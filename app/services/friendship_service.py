@@ -75,12 +75,12 @@ class FriendshipService:
             if existing_friendship.status == "pending":
                 raise ConflictException(
                     message="Friend request already pending",
-                    details={"friendship_id": existing_friendship.id}
+                    details={"friendship_id": existing_friendship.id_friendship}
                 )
             elif existing_friendship.status == "accepted":
                 raise ConflictException(
                     message="Users are already friends",
-                    details={"friendship_id": existing_friendship.id}
+                    details={"friendship_id": existing_friendship.id_friendship}
                 )
         
         # Create new friendship with pending status
@@ -151,7 +151,7 @@ class FriendshipService:
         if friendship.status != "pending":
             raise BadRequestException(
                 message="Friend request is not pending",
-                details={"current_status": friendship.status, "friendship_id": friendship.id}
+                details={"current_status": friendship.status, "friendship_id": friendship.id_friendship}
             )
         
         # Update status to accepted
