@@ -66,14 +66,14 @@ async def send_friend_request(
     """
     Send a friend request to another user.
     
-    - **nickname**: Nickname of the user to send the friend request to
+    - **friend_user_id**: User ID of the user to send the friend request to
     
     Returns the created friendship object with status 'pending'.
     """
     friendship = await FriendshipService.send_friend_request(
         session=session,
         requester_id=current_user.id,
-        recipient_nickname=friendship_data.nickname
+        recipient_id=friendship_data.friend_user_id
     )
     
     return friendship
@@ -88,29 +88,29 @@ async def accept_friend_request(
     """
     Accept a pending friend request.
     
-    - **nickname**: Nickname of the user who sent the friend request
+    - **friend_user_id**: User ID of the user who sent the friend request
     
     Only the recipient of the friend request can accept it.
     """
     friendship = await FriendshipService.accept_friend_request(
         session=session,
         recipient_id=current_user.id,
-        requester_nickname=friendship_data.nickname
+        requester_id=friendship_data.friend_user_id
     )
     
     return friendship
 
 
-@friendship_router.delete("/{nickname}", status_code=status.HTTP_204_NO_CONTENT)
+@friendship_router.delete("/{friend_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_friendship(
-    nickname: str,
+    friend_user_id: int,
     current_user: RegisteredUser = Depends(current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ):
     """
     Remove a friendship or reject a friend request.
     
-    - **nickname**: Nickname of the friend to remove
+    - **friend_user_id**: User ID of the friend to remove
     
     Either user in the friendship can remove it.
     If the friendship is pending, this acts as rejecting the request.
@@ -118,7 +118,7 @@ async def remove_friendship(
     await FriendshipService.remove_friendship(
         session=session,
         user_id=current_user.id,
-        friend_nickname=nickname
+        friend_id=friend_user_id
     )
     
     return None

@@ -17,7 +17,7 @@ class FriendshipService:
     async def send_friend_request(
         session: AsyncSession,
         requester_id: int,
-        recipient_nickname: str
+        recipient_id: int
     ) -> Friendship:
         """
         Send a friend request from requester to recipient
@@ -25,7 +25,7 @@ class FriendshipService:
         Args:
             session: Database session
             requester_id: ID of user sending the request
-            recipient_nickname: Nickname of user receiving the request
+            recipient_id: ID of user receiving the request
             
         Returns:
             Created friendship object
@@ -33,9 +33,9 @@ class FriendshipService:
         Raises:
             HTTPException: If users are the same, recipient doesn't exist, or friendship already exists
         """
-        # Check if recipient exists and is active by nickname
+        # Check if recipient exists and is active
         recipient_query = select(RegisteredUser).where(
-            RegisteredUser.nickname == recipient_nickname,
+            RegisteredUser.id == recipient_id,
             RegisteredUser.is_active == True
         )
         result = await session.execute(recipient_query)
@@ -44,7 +44,7 @@ class FriendshipService:
         if not recipient:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with nickname '{recipient_nickname}' not found"
+                detail=f"User with ID {recipient_id} not found"
             )
         
         # Check if trying to friend themselves
@@ -99,7 +99,7 @@ class FriendshipService:
     async def accept_friend_request(
         session: AsyncSession,
         recipient_id: int,
-        requester_nickname: str
+        requester_id: int
     ) -> Friendship:
         """
         Accept a pending friend request
@@ -107,7 +107,7 @@ class FriendshipService:
         Args:
             session: Database session
             recipient_id: ID of user accepting the request
-            requester_nickname: Nickname of user who sent the request
+            requester_id: ID of user who sent the request
             
         Returns:
             Updated friendship object
@@ -115,9 +115,9 @@ class FriendshipService:
         Raises:
             HTTPException: If requester not found, friendship not found, not pending, or user is not the recipient
         """
-        # Get the requester by nickname
+        # Get the requester
         requester_query = select(RegisteredUser).where(
-            RegisteredUser.nickname == requester_nickname,
+            RegisteredUser.id == requester_id,
             RegisteredUser.is_active == True
         )
         result = await session.execute(requester_query)
@@ -126,7 +126,7 @@ class FriendshipService:
         if not requester:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with nickname '{requester_nickname}' not found"
+                detail=f"User with ID {requester_id} not found"
             )
         
         # Get the friendship where requester is user_id_1 and recipient is user_id_2
@@ -163,7 +163,7 @@ class FriendshipService:
     async def remove_friendship(
         session: AsyncSession,
         user_id: int,
-        friend_nickname: str
+        friend_id: int
     ) -> None:
         """
         Remove a friendship or reject a friend request
@@ -171,14 +171,14 @@ class FriendshipService:
         Args:
             session: Database session
             user_id: ID of user removing the friendship
-            friend_nickname: Nickname of the friend to remove
+            friend_id: ID of the friend to remove
             
         Raises:
             HTTPException: If friend not found, friendship not found, or user is not part of the friendship
         """
-        # Get the friend by nickname
+        # Get the friend
         friend_query = select(RegisteredUser).where(
-            RegisteredUser.nickname == friend_nickname,
+            RegisteredUser.id == friend_id,
             RegisteredUser.is_active == True
         )
         result = await session.execute(friend_query)
@@ -187,7 +187,7 @@ class FriendshipService:
         if not friend:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with nickname '{friend_nickname}' not found"
+                detail=f"User with ID {friend_id} not found"
             )
         
         # Get the friendship (in either direction)
@@ -264,6 +264,7 @@ class FriendshipService:
                 is_requester = False
             
             friendship_list.append(FriendshipWithUser(
+                friend_user_id=friend_id,
                 friend_nickname=friend.nickname,
                 friend_pfp_path=friend.pfp_path,
                 friend_description=friend.description,
@@ -336,6 +337,7 @@ class FriendshipService:
         # Transform to response format
         user_list = [
             UserSearchResult(
+                user_id=user.id,
                 nickname=user.nickname,
                 pfp_path=user.pfp_path,
                 description=user.description

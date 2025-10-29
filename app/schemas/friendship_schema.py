@@ -12,7 +12,7 @@ class FriendshipBase(BaseModel):
 
 class FriendshipCreate(FriendshipBase):
     """Schema for creating a friendship (friend request)"""
-    nickname: str
+    friend_user_id: int
 
 
 class FriendshipResponse(BaseModel):
@@ -25,6 +25,7 @@ class FriendshipResponse(BaseModel):
 
 class FriendshipWithUser(BaseModel):
     """Schema for friendship with user details"""
+    friend_user_id: int
     friend_nickname: str
     friend_pfp_path: Optional[str]
     friend_description: Optional[str]
@@ -37,6 +38,7 @@ class FriendshipWithUser(BaseModel):
 
 class UserSearchResult(BaseModel):
     """Schema for user search results"""
+    user_id: int
     nickname: str
     pfp_path: Optional[str]
     description: Optional[str]
