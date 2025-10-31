@@ -24,18 +24,18 @@ Edit `.env` with your configuration:
 
 **Redis Configuration:**
 
-- `REDIS_HOST`: Redis server host (default: localhost)
-- `REDIS_PORT`: Redis server port (default: 6379)
-- `REDIS_DB`: Redis database number (default: 0)
-- `REDIS_PASSWORD`: Redis password (leave empty if not set)
+-   `REDIS_HOST`: Redis server host (default: localhost)
+-   `REDIS_PORT`: Redis server port (default: 6379)
+-   `REDIS_DB`: Redis database number (default: 0)
+-   `REDIS_PASSWORD`: Redis password (leave empty if not set)
 
 **PostgreSQL Configuration:**
 
-- `POSTGRES_HOST`: PostgreSQL server host (default: localhost)
-- `POSTGRES_PORT`: PostgreSQL server port (default: 5432)
-- `POSTGRES_USER`: PostgreSQL username (default: postgres)
-- `POSTGRES_PASSWORD`: PostgreSQL password (default: postgres)
-- `POSTGRES_DB`: Database name (default: l2p_db)
+-   `POSTGRES_HOST`: PostgreSQL server host (default: localhost)
+-   `POSTGRES_PORT`: PostgreSQL server port (default: 5432)
+-   `POSTGRES_USER`: PostgreSQL username (default: postgres)
+-   `POSTGRES_PASSWORD`: PostgreSQL password (default: postgres)
+-   `POSTGRES_DB`: Database name (default: l2p_db)
 
 ### 3. Start Redis
 
@@ -43,18 +43,6 @@ Make sure Redis is running. If you have Docker:
 
 ```bash
 docker run -d --name redis -p 6379:6379 redis:latest
-```
-
-Or install Redis locally and start it:
-
-```bash
-# On Ubuntu/Debian
-sudo apt-get install redis-server
-sudo systemctl start redis
-
-# On macOS
-brew install redis
-brew services start redis
 ```
 
 ### 4. Start PostgreSQL
@@ -70,25 +58,33 @@ docker run -d --name postgres \
   postgres
 ```
 
-Or install PostgreSQL locally:
+### 5. Start MinIO
+
+MinIO is used for object storage (chat images, files, etc.). Start MinIO using Docker:
 
 ```bash
-# On Ubuntu/Debian
-sudo apt-get install postgresql
-sudo systemctl start postgresql
-
-# On macOS
-brew install postgresql@16
-brew services start postgresql@16
+docker run -d --name minio \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  -v minio-data:/data \
+  quay.io/minio/minio server /data --console-address ":9001"
 ```
 
-Create the database (if not using Docker with pre-created DB):
+Access the MinIO Console at `http://localhost:9001` (login: minioadmin / minioadmin)
 
-```bash
-psql -U postgres -c "CREATE DATABASE l2p_db;"
-```
+**MinIO Environment Variables:**
 
-### 5. Run Database Migrations
+Add these to your `.env` file:
+
+-   `MINIO_ENDPOINT`: MinIO server endpoint (default: localhost:9000)
+-   `MINIO_ACCESS_KEY`: MinIO access key (default: minioadmin)
+-   `MINIO_SECRET_KEY`: MinIO secret key (default: minioadmin)
+-   `MINIO_BUCKET_NAME`: Bucket name (default: l2p-bucket)
+-   `MINIO_SECURE`: Use HTTPS (default: False for local development)
+
+### 6. Run Database Migrations
 
 Initialize Alembic for database migrations (first time only):
 
@@ -114,4 +110,39 @@ To start the development server:
 ```bash
 cd app
 uvicorn main:app --reload
+```
+
+## Testing
+
+### Running Tests
+
+The project uses pytest for testing.
+
+**Run all tests:**
+
+```bash
+cd app
+python -m pytest tests/ -v
+```
+
+**Run tests with coverage report:**
+
+```bash
+python -m pytest tests/ -v --cov=services --cov-report=term-missing
+```
+
+**Run specific test file:**
+
+```bash
+python -m pytest tests/test_friendship_service.py -v
+python -m pytest tests/test_chat_service.py -v
+```
+
+### Installing Test Dependencies
+
+Test dependencies are separate from the main application requirements:
+
+```bash
+cd app
+pip install -r requirements-test.txt
 ```

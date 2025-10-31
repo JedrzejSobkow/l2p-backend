@@ -13,3 +13,12 @@ __pycache__/
 
 # Environment variables
 .env
+
+# Test databases
+test.db
+*.db-journal
+
+# Test coverage
+htmlcov/
+.coverage
+.pytest_cache/
