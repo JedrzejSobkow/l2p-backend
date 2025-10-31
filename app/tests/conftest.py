@@ -178,3 +178,17 @@ async def accepted_friendship(
     await db_session.commit()
     await db_session.refresh(friendship)
     return friendship
+
+
+@pytest.fixture
+async def redis_client():
+    """Create a test Redis client using fakeredis"""
+    import fakeredis.aioredis
+    
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    
+    yield redis
+    
+    # Cleanup
+    await redis.flushall()
+    await redis.aclose()
