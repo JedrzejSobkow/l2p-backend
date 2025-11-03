@@ -126,10 +126,12 @@ class LobbyNamespace(AuthNamespace):
             
             # Create lobby
             redis = get_redis()
+            user = await self.get_authenticated_user(sid)
             lobby = await LobbyService.create_lobby(
                 redis=redis,
                 host_id=user_id,
                 host_nickname=user_nickname,
+                host_pfp_path=user.pfp_path if user else None,
                 max_players=request.max_players,
                 is_public=request.is_public
             )
@@ -199,6 +201,7 @@ class LobbyNamespace(AuthNamespace):
                 return
             
             user_nickname = manager.get_nickname(user_id)
+            user = None
             if not user_nickname:
                 user = await self.get_authenticated_user(sid)
                 if not user:
@@ -210,13 +213,18 @@ class LobbyNamespace(AuthNamespace):
                     return
                 user_nickname = user.nickname
             
+            # Get user for pfp_path if not already fetched
+            if not user:
+                user = await self.get_authenticated_user(sid)
+            
             # Join lobby
             redis = get_redis()
             lobby = await LobbyService.join_lobby(
                 redis=redis,
                 lobby_code=request.lobby_code,
                 user_id=user_id,
-                user_nickname=user_nickname
+                user_nickname=user_nickname,
+                user_pfp_path=user.pfp_path if user else None
             )
             
             # Join Socket.IO room

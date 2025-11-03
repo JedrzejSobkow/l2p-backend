@@ -47,6 +47,7 @@ async def create_lobby(
             redis=redis,
             host_id=current_user.id,
             host_nickname=current_user.nickname,
+            host_pfp_path=current_user.pfp_path,
             max_players=request.max_players,
             is_public=request.is_public
         )
@@ -159,7 +160,8 @@ async def join_lobby(
             redis=redis,
             lobby_code=lobby_code.upper(),
             user_id=current_user.id,
-            user_nickname=current_user.nickname
+            user_nickname=current_user.nickname,
+            user_pfp_path=current_user.pfp_path
         )
         
         lobby_response = LobbyResponse(

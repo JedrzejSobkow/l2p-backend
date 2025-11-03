@@ -57,6 +57,7 @@ class LobbyMemberResponse(BaseModel):
     """Information about a lobby member"""
     user_id: int
     nickname: str
+    pfp_path: Optional[str] = None
     is_host: bool
     is_ready: bool = False
     joined_at: datetime

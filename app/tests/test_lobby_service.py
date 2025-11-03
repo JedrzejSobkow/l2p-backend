@@ -20,6 +20,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="TestUser",
+            host_pfp_path="/avatars/test.jpg",
             max_players=4
         )
         
@@ -30,6 +31,7 @@ class TestLobbyService:
         assert lobby["current_players"] == 1
         assert len(lobby["members"]) == 1
         assert lobby["members"][0]["user_id"] == 1
+        assert lobby["members"][0]["pfp_path"] == "/avatars/test.jpg"
         assert lobby["members"][0]["is_host"] is True
     
     async def test_create_lobby_invalid_max_players(self, redis_client):
@@ -39,6 +41,7 @@ class TestLobbyService:
                 redis=redis_client,
                 host_id=1,
                 host_nickname="TestUser",
+                host_pfp_path=None,
                 max_players=10  # Invalid: > 6
             )
         assert "Invalid max_players" in str(exc.value.message)
@@ -50,6 +53,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="TestUser",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -59,6 +63,7 @@ class TestLobbyService:
                 redis=redis_client,
                 host_id=1,
                 host_nickname="TestUser",
+                host_pfp_path=None,
                 max_players=4
             )
         assert "already in a lobby" in str(exc.value.message)
@@ -69,6 +74,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="TestUser",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -91,6 +97,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -99,7 +106,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         assert lobby["current_players"] == 2
@@ -114,7 +122,8 @@ class TestLobbyService:
                 redis=redis_client,
                 lobby_code="INVALID",
                 user_id=2,
-                user_nickname="Player2"
+                user_nickname="Player2",
+            user_pfp_path=None
             )
         assert "not found" in str(exc.value.message)
     
@@ -125,6 +134,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=2
         )
         
@@ -133,7 +143,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Try to join full lobby
@@ -142,7 +153,8 @@ class TestLobbyService:
                 redis=redis_client,
                 lobby_code=created_lobby["lobby_code"],
                 user_id=3,
-                user_nickname="Player3"
+                user_nickname="Player3",
+            user_pfp_path=None
             )
         assert "full" in str(exc.value.message)
     
@@ -153,6 +165,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -160,7 +173,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Leave lobby
@@ -184,6 +198,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -191,7 +206,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Host leaves
@@ -217,6 +233,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -240,6 +257,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -260,6 +278,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -267,7 +286,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Try to update settings as non-host
@@ -287,6 +307,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=6
         )
         
@@ -294,14 +315,16 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         await LobbyService.join_lobby(
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=3,
-            user_nickname="Player3"
+            user_nickname="Player3",
+        user_pfp_path=None
         )
         
         # Try to set max_players to 2 (below current 3 players)
@@ -321,6 +344,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -328,7 +352,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Transfer host
@@ -353,6 +378,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -360,7 +386,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=created_lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Try to transfer as non-host
@@ -380,6 +407,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -400,6 +428,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -419,6 +448,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4,
             is_public=True
         )
@@ -435,6 +465,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -447,6 +478,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host1",
+            host_pfp_path=None,
             max_players=4,
             is_public=True
         )
@@ -455,6 +487,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=2,
             host_nickname="Host2",
+            host_pfp_path=None,
             max_players=4,
             is_public=False
         )
@@ -463,6 +496,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=3,
             host_nickname="Host3",
+            host_pfp_path=None,
             max_players=6,
             is_public=True
         )
@@ -490,6 +524,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4,
             is_public=False
         )
@@ -504,6 +539,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4,
             is_public=False
         )
@@ -531,6 +567,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4,
             is_public=False
         )
@@ -552,6 +589,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -573,6 +611,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -580,14 +619,16 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         await LobbyService.join_lobby(
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
             user_id=3,
-            user_nickname="Player3"
+            user_nickname="Player3",
+        user_pfp_path=None
         )
         
         # Host kicks Player2
@@ -616,6 +657,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -623,14 +665,16 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         await LobbyService.join_lobby(
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
             user_id=3,
-            user_nickname="Player3"
+            user_nickname="Player3",
+        user_pfp_path=None
         )
         
         # Player2 tries to kick Player3
@@ -649,6 +693,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -668,6 +713,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -675,7 +721,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Try to kick user who isn't in lobby
@@ -705,6 +752,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4,
             is_public=False
         )
@@ -730,6 +778,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host1",
+            host_pfp_path=None,
             max_players=4,
             is_public=True
         )
@@ -740,6 +789,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=2,
             host_nickname="Host2",
+            host_pfp_path=None,
             max_players=4,
             is_public=True
         )
@@ -750,6 +800,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=3,
             host_nickname="Host3",
+            host_pfp_path=None,
             max_players=4,
             is_public=True
         )
@@ -769,6 +820,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -809,6 +861,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -819,7 +872,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby_code,
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Join third member
@@ -827,7 +881,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby_code,
             user_id=3,
-            user_nickname="Player3"
+            user_nickname="Player3",
+        user_pfp_path=None
         )
         
         # Toggle ready for all members
@@ -867,6 +922,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -888,6 +944,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -898,7 +955,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby_code,
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Verify new member is not ready
@@ -912,6 +970,7 @@ class TestLobbyService:
             redis=redis_client,
             host_id=1,
             host_nickname="Host",
+            host_pfp_path=None,
             max_players=4
         )
         
@@ -922,7 +981,8 @@ class TestLobbyService:
             redis=redis_client,
             lobby_code=lobby_code,
             user_id=2,
-            user_nickname="Player2"
+            user_nickname="Player2",
+        user_pfp_path=None
         )
         
         # Set host to ready

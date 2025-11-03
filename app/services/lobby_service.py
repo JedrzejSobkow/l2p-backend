@@ -50,6 +50,7 @@ class LobbyService:
         redis: Redis,
         host_id: int,
         host_nickname: str,
+        host_pfp_path: Optional[str] = None,
         max_players: int = 6,
         is_public: bool = False
     ) -> Dict[str, Any]:
@@ -110,6 +111,7 @@ class LobbyService:
         host_member = {
             "user_id": host_id,
             "nickname": host_nickname,
+            "pfp_path": host_pfp_path,
             "is_host": True,
             "is_ready": False,
             "joined_at": now.isoformat(),
@@ -191,7 +193,8 @@ class LobbyService:
         redis: Redis,
         lobby_code: str,
         user_id: int,
-        user_nickname: str
+        user_nickname: str,
+        user_pfp_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Join an existing lobby
@@ -201,6 +204,7 @@ class LobbyService:
             lobby_code: 6-character lobby code
             user_id: User ID joining
             user_nickname: Nickname of the user
+            user_pfp_path: Path to user's profile picture
             
         Returns:
             Dictionary with updated lobby details
@@ -236,6 +240,7 @@ class LobbyService:
         member = {
             "user_id": user_id,
             "nickname": user_nickname,
+            "pfp_path": user_pfp_path,
             "is_host": False,
             "is_ready": False,
             "joined_at": now.isoformat(),
