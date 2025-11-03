@@ -24,7 +24,16 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "l2p_db"
-    
+
+    # MinIO Configuration
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET_NAME: str = "l2p-bucket"
+    MINIO_SECURE: bool = False
+    MINIO_PORT: int = 9000
+    MINIO_CONSOLE_PORT: int = 9001
+
     # Application Configuration
     APP_NAME: str = "L2P Backend"
     DEBUG: bool = True
