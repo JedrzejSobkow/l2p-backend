@@ -111,6 +111,7 @@ class LobbyService:
             "user_id": host_id,
             "nickname": host_nickname,
             "is_host": True,
+            "is_ready": False,
             "joined_at": now.isoformat(),
         }
         
@@ -236,6 +237,7 @@ class LobbyService:
             "user_id": user_id,
             "nickname": user_nickname,
             "is_host": False,
+            "is_ready": False,
             "joined_at": now.isoformat(),
         }
         
@@ -674,3 +676,87 @@ class LobbyService:
             await pipe.execute()
         
         logger.info(f"Lobby {lobby_code} closed and cleaned up")
+    
+    @staticmethod
+    async def toggle_ready(
+        redis: Redis,
+        lobby_code: str,
+        user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Toggle ready status for a member in the lobby
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            user_id: User ID of the member
+            
+        Returns:
+            Dictionary with updated member info and new ready status
+            
+        Raises:
+            NotFoundException: If lobby or member not found
+        """
+        # Check if lobby exists
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        if not lobby_data_raw:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Get all members
+        members_raw = await redis.zrange(
+            LobbyService._lobby_members_key(lobby_code),
+            0, -1,
+            withscores=True
+        )
+        
+        # Find the member
+        member_to_update = None
+        member_score = None
+        
+        for member_json, score in members_raw:
+            member = json.loads(member_json)
+            if member["user_id"] == user_id:
+                member_to_update = member
+                member_score = score
+                break
+        
+        if not member_to_update:
+            raise NotFoundException(
+                message="You are not a member of this lobby",
+                details={"user_id": user_id, "lobby_code": lobby_code}
+            )
+        
+        # Toggle ready status
+        new_ready_status = not member_to_update.get("is_ready", False)
+        member_to_update["is_ready"] = new_ready_status
+        
+        # Update member in Redis
+        async with redis.pipeline(transaction=True) as pipe:
+            # Remove old member entry
+            pipe.zrem(
+                LobbyService._lobby_members_key(lobby_code),
+                json.dumps({**member_to_update, "is_ready": not new_ready_status})
+            )
+            
+            # Add updated member entry with same score (preserve join time)
+            pipe.zadd(
+                LobbyService._lobby_members_key(lobby_code),
+                {json.dumps(member_to_update): member_score}
+            )
+            
+            # Refresh TTL
+            pipe.expire(LobbyService._lobby_members_key(lobby_code), LobbyService.LOBBY_TTL)
+            
+            await pipe.execute()
+        
+        logger.info(f"User {user_id} toggled ready to {new_ready_status} in lobby {lobby_code}")
+        
+        return {
+            "user_id": user_id,
+            "nickname": member_to_update["nickname"],
+            "is_ready": new_ready_status,
+            "lobby_code": lobby_code
+        }

@@ -12,6 +12,7 @@ from schemas.lobby_schema import (
     UpdateLobbySettingsRequest,
     TransferHostRequest,
     KickMemberRequest,
+    ToggleReadyRequest,
     LobbyResponse,
     LobbyCreatedResponse,
     LobbyJoinedResponse,
@@ -21,6 +22,7 @@ from schemas.lobby_schema import (
     LobbyHostTransferredEvent,
     LobbySettingsUpdatedEvent,
     MemberKickedEvent,
+    MemberReadyChangedEvent,
     PublicLobbiesResponse,
     LobbyClosedEvent,
     LobbyErrorResponse,
@@ -674,6 +676,68 @@ class LobbyNamespace(AuthNamespace):
             logger.error(f"Error kicking member: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to kick member',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+    
+    async def on_toggle_ready(self, sid, data):
+        """
+        Toggle ready status for current user
+        
+        Expected data: {"lobby_code": str}
+        """
+        try:
+            # Validate input
+            try:
+                request = ToggleReadyRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            # Toggle ready status
+            redis = get_redis()
+            result = await LobbyService.toggle_ready(
+                redis=redis,
+                lobby_code=request.lobby_code,
+                user_id=user_id
+            )
+            
+            # Notify all members in the lobby
+            ready_event = MemberReadyChangedEvent(
+                user_id=result["user_id"],
+                nickname=result["nickname"],
+                is_ready=result["is_ready"]
+            )
+            await self.emit('member_ready_changed', ready_event.model_dump(), room=request.lobby_code)
+            
+            logger.info(f"User {user_id} toggled ready to {result['is_ready']} in lobby {request.lobby_code}")
+            
+        except (NotFoundException, BadRequestException) as e:
+            error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST'
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=error_code,
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+        except Exception as e:
+            logger.error(f"Error toggling ready: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to toggle ready status',
                 error_code='INTERNAL_ERROR'
             )
             await self.emit('lobby_error', error_response.model_dump(), room=sid)

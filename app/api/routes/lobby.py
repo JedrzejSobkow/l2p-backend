@@ -431,3 +431,48 @@ async def get_my_lobby(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"message": "Failed to get lobby"}
         )
+
+
+@router.post("/{lobby_code}/ready", status_code=status.HTTP_200_OK)
+async def toggle_ready(
+    lobby_code: str,
+    current_user: RegisteredUser = Depends(current_active_user)
+):
+    """
+    Toggle ready status for current user in the lobby
+    
+    - **lobby_code**: 6-character lobby code
+    
+    Returns updated member ready status
+    """
+    try:
+        redis = get_redis()
+        result = await LobbyService.toggle_ready(
+            redis=redis,
+            lobby_code=lobby_code.upper(),
+            user_id=current_user.id
+        )
+        
+        return {
+            "message": f"Ready status toggled to {result['is_ready']}",
+            "user_id": result["user_id"],
+            "nickname": result["nickname"],
+            "is_ready": result["is_ready"]
+        }
+        
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": e.message, "details": e.details}
+        )
+    except BadRequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": e.message, "details": e.details}
+        )
+    except Exception as e:
+        logger.error(f"Error toggling ready: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": "Failed to toggle ready status"}
+        )

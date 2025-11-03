@@ -761,3 +761,182 @@ class TestLobbyService:
         assert public_lobbies[0]["lobby_code"] == lobby3["lobby_code"]
         assert public_lobbies[1]["lobby_code"] == lobby2["lobby_code"]
         assert public_lobbies[2]["lobby_code"] == lobby1["lobby_code"]
+    
+    async def test_toggle_ready_success(self, redis_client):
+        """Test toggling ready status successfully"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            max_players=4
+        )
+        
+        lobby_code = lobby["lobby_code"]
+        
+        # Toggle ready to True
+        result = await LobbyService.toggle_ready(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=1
+        )
+        
+        assert result["user_id"] == 1
+        assert result["is_ready"] is True
+        
+        # Verify in lobby data
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
+        assert lobby_data["members"][0]["is_ready"] is True
+        
+        # Toggle ready back to False
+        result = await LobbyService.toggle_ready(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=1
+        )
+        
+        assert result["user_id"] == 1
+        assert result["is_ready"] is False
+        
+        # Verify in lobby data
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
+        assert lobby_data["members"][0]["is_ready"] is False
+    
+    async def test_toggle_ready_multiple_members(self, redis_client):
+        """Test toggling ready for multiple members"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            max_players=4
+        )
+        
+        lobby_code = lobby["lobby_code"]
+        
+        # Join second member
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=2,
+            user_nickname="Player2"
+        )
+        
+        # Join third member
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=3,
+            user_nickname="Player3"
+        )
+        
+        # Toggle ready for all members
+        await LobbyService.toggle_ready(redis_client, lobby_code, 1)
+        await LobbyService.toggle_ready(redis_client, lobby_code, 2)
+        await LobbyService.toggle_ready(redis_client, lobby_code, 3)
+        
+        # Verify all are ready
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
+        for member in lobby_data["members"]:
+            assert member["is_ready"] is True
+        
+        # Toggle one member to not ready
+        await LobbyService.toggle_ready(redis_client, lobby_code, 2)
+        
+        # Verify mixed ready state
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
+        ready_states = {m["user_id"]: m["is_ready"] for m in lobby_data["members"]}
+        assert ready_states[1] is True
+        assert ready_states[2] is False
+        assert ready_states[3] is True
+    
+    async def test_toggle_ready_lobby_not_found(self, redis_client):
+        """Test toggling ready in non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.toggle_ready(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                user_id=1
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_toggle_ready_user_not_in_lobby(self, redis_client):
+        """Test toggling ready when user is not a member"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            max_players=4
+        )
+        
+        lobby_code = lobby["lobby_code"]
+        
+        # Try to toggle ready for non-member
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.toggle_ready(
+                redis=redis_client,
+                lobby_code=lobby_code,
+                user_id=999
+            )
+        assert "not a member" in str(exc.value.message)
+    
+    async def test_new_member_starts_not_ready(self, redis_client):
+        """Test that new members start with is_ready=False"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            max_players=4
+        )
+        
+        lobby_code = lobby["lobby_code"]
+        
+        # Join as second member
+        result = await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=2,
+            user_nickname="Player2"
+        )
+        
+        # Verify new member is not ready
+        member = next(m for m in result["members"] if m["user_id"] == 2)
+        assert member["is_ready"] is False
+    
+    async def test_ready_state_preserved_across_operations(self, redis_client):
+        """Test that ready state is preserved during other operations"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            max_players=4
+        )
+        
+        lobby_code = lobby["lobby_code"]
+        
+        # Join members
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=2,
+            user_nickname="Player2"
+        )
+        
+        # Set host to ready
+        await LobbyService.toggle_ready(redis_client, lobby_code, 1)
+        
+        # Update lobby settings
+        await LobbyService.update_lobby_settings(
+            redis=redis_client,
+            lobby_code=lobby_code,
+            user_id=1,
+            max_players=5
+        )
+        
+        # Verify host is still ready after settings update
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
+        host_member = next(m for m in lobby_data["members"] if m["user_id"] == 1)
+        assert host_member["is_ready"] is True

@@ -41,6 +41,11 @@ class KickMemberRequest(BaseModel):
     user_id: int = Field(..., description="User ID of the member to kick")
 
 
+class ToggleReadyRequest(BaseModel):
+    """Request to toggle ready status"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+
+
 class LeaveLobbyRequest(BaseModel):
     """Request to leave a lobby"""
     lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
@@ -53,6 +58,7 @@ class LobbyMemberResponse(BaseModel):
     user_id: int
     nickname: str
     is_host: bool
+    is_ready: bool = False
     joined_at: datetime
 
 
@@ -122,6 +128,14 @@ class MemberKickedEvent(BaseModel):
     nickname: str
     kicked_by_id: int
     message: str = "A member has been kicked"
+
+
+class MemberReadyChangedEvent(BaseModel):
+    """Event emitted when a member changes ready status"""
+    user_id: int
+    nickname: str
+    is_ready: bool
+    message: str = "Member ready status changed"
 
 
 class LobbyClosedEvent(BaseModel):
