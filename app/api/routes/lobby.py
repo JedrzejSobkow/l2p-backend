@@ -10,10 +10,12 @@ from schemas.lobby_schema import (
     JoinLobbyRequest,
     UpdateLobbySettingsRequest,
     TransferHostRequest,
+    KickMemberRequest,
     LobbyResponse,
     LobbyCreatedResponse,
     LobbyJoinedResponse,
     LobbyMemberResponse,
+    PublicLobbiesResponse,
 )
 from exceptions.domain_exceptions import (
     NotFoundException,
@@ -45,7 +47,8 @@ async def create_lobby(
             redis=redis,
             host_id=current_user.id,
             host_nickname=current_user.nickname,
-            max_players=request.max_players
+            max_players=request.max_players,
+            is_public=request.is_public
         )
         
         return LobbyCreatedResponse(lobby_code=lobby["lobby_code"])
@@ -60,6 +63,43 @@ async def create_lobby(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"message": "Failed to create lobby"}
+        )
+
+
+@router.get("/public", response_model=PublicLobbiesResponse)
+async def get_public_lobbies(
+    current_user: RegisteredUser = Depends(current_active_user)
+):
+    """
+    Get all public lobbies
+    """
+    try:
+        redis = get_redis()
+        lobbies = await LobbyService.get_all_public_lobbies(redis)
+        
+        lobbies_response = [
+            LobbyResponse(
+                lobby_code=lobby["lobby_code"],
+                host_id=lobby["host_id"],
+                max_players=lobby["max_players"],
+                current_players=lobby["current_players"],
+                is_public=lobby.get("is_public", False),
+                members=[LobbyMemberResponse(**m) for m in lobby["members"]],
+                created_at=lobby["created_at"]
+            )
+            for lobby in lobbies
+        ]
+        
+        return PublicLobbiesResponse(
+            lobbies=lobbies_response,
+            total=len(lobbies_response)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting public lobbies: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": "Failed to get public lobbies"}
         )
 
 
@@ -88,6 +128,7 @@ async def get_lobby(
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
+            is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
             created_at=lobby["created_at"]
         )
@@ -126,6 +167,7 @@ async def join_lobby(
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
+            is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
             created_at=lobby["created_at"]
         )
@@ -206,7 +248,8 @@ async def update_lobby_settings(
             redis=redis,
             lobby_code=lobby_code.upper(),
             user_id=current_user.id,
-            max_players=request.max_players
+            max_players=request.max_players,
+            is_public=request.is_public
         )
         
         return LobbyResponse(
@@ -214,6 +257,7 @@ async def update_lobby_settings(
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
+            is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
             created_at=lobby["created_at"]
         )
@@ -270,6 +314,7 @@ async def transfer_host(
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
+            is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
             created_at=lobby["created_at"]
         )
@@ -294,6 +339,52 @@ async def transfer_host(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"message": "Failed to transfer host"}
+        )
+
+
+@router.post("/{lobby_code}/kick/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def kick_member(
+    lobby_code: str,
+    user_id: int,
+    current_user: RegisteredUser = Depends(current_active_user)
+):
+    """
+    Kick a member from lobby (host only)
+    
+    - **lobby_code**: 6-character lobby code
+    - **user_id**: User ID of the member to kick
+    """
+    try:
+        redis = get_redis()
+        await LobbyService.kick_member(
+            redis=redis,
+            lobby_code=lobby_code.upper(),
+            host_id=current_user.id,
+            user_id_to_kick=user_id
+        )
+        
+        return None
+        
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": e.message}
+        )
+    except ForbiddenException as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"message": e.message}
+        )
+    except BadRequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": e.message}
+        )
+    except Exception as e:
+        logger.error(f"Error kicking member: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": "Failed to kick member"}
         )
 
 
@@ -327,6 +418,7 @@ async def get_my_lobby(
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
+            is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
             created_at=lobby["created_at"]
         )

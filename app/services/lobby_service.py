@@ -50,7 +50,8 @@ class LobbyService:
         redis: Redis,
         host_id: int,
         host_nickname: str,
-        max_players: int = 6
+        max_players: int = 6,
+        is_public: bool = False
     ) -> Dict[str, Any]:
         """
         Create a new lobby
@@ -101,6 +102,7 @@ class LobbyService:
             "lobby_code": lobby_code,
             "host_id": host_id,
             "max_players": max_players,
+            "is_public": is_public,
             "created_at": now.isoformat(),
         }
         
@@ -143,6 +145,7 @@ class LobbyService:
             "lobby_code": lobby_code,
             "host_id": host_id,
             "max_players": max_players,
+            "is_public": is_public,
             "current_players": 1,
             "members": [host_member],
             "created_at": now,
@@ -359,7 +362,8 @@ class LobbyService:
         redis: Redis,
         lobby_code: str,
         user_id: int,
-        max_players: int
+        max_players: Optional[int] = None,
+        is_public: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Update lobby settings (only host can do this)
@@ -368,7 +372,8 @@ class LobbyService:
             redis: Redis client
             lobby_code: 6-character lobby code
             user_id: User ID requesting update
-            max_players: New max players value
+            max_players: New max players value (optional)
+            is_public: New public/private setting (optional)
             
         Returns:
             Updated lobby details
@@ -378,6 +383,12 @@ class LobbyService:
             ForbiddenException: If user is not host
             BadRequestException: If invalid max_players or below current player count
         """
+        # At least one setting must be provided
+        if max_players is None and is_public is None:
+            raise BadRequestException(
+                message="At least one setting must be provided",
+                details={"max_players": max_players, "is_public": is_public}
+            )
         # Get lobby
         lobby = await LobbyService.get_lobby(redis, lobby_code)
         if not lobby:
@@ -387,27 +398,32 @@ class LobbyService:
         if lobby["host_id"] != user_id:
             raise ForbiddenException(message="Only the host can update lobby settings")
         
-        # Validate max_players
-        if not 2 <= max_players <= 6:
-            raise BadRequestException(
-                message="Invalid max_players",
-                details={"max_players": "Must be between 2 and 6"}
-            )
-        
-        # Check if new max is not below current player count
-        if max_players < lobby["current_players"]:
-            raise BadRequestException(
-                message="Cannot set max_players below current player count",
-                details={
-                    "current_players": lobby["current_players"],
-                    "requested_max": max_players
-                }
-            )
+        # Validate max_players if provided
+        if max_players is not None:
+            if not 2 <= max_players <= 6:
+                raise BadRequestException(
+                    message="Invalid max_players",
+                    details={"max_players": "Must be between 2 and 6"}
+                )
+            
+            # Check if new max is not below current player count
+            if max_players < lobby["current_players"]:
+                raise BadRequestException(
+                    message="Cannot set max_players below current player count",
+                    details={
+                        "current_players": lobby["current_players"],
+                        "requested_max": max_players
+                    }
+                )
         
         # Update lobby data
         lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
         lobby_data = json.loads(lobby_data_raw)
-        lobby_data["max_players"] = max_players
+        
+        if max_players is not None:
+            lobby_data["max_players"] = max_players
+        if is_public is not None:
+            lobby_data["is_public"] = is_public
         
         await redis.set(
             LobbyService._lobby_key(lobby_code),
@@ -415,7 +431,7 @@ class LobbyService:
             ex=LobbyService.LOBBY_TTL
         )
         
-        logger.info(f"Lobby {lobby_code} max_players updated to {max_players} by host {user_id}")
+        logger.info(f"Lobby {lobby_code} settings updated by host {user_id}: max_players={max_players}, is_public={is_public}")
         
         return await LobbyService.get_lobby(redis, lobby_code)
     
@@ -529,6 +545,106 @@ class LobbyService:
         if lobby_code:
             return lobby_code.decode() if isinstance(lobby_code, bytes) else lobby_code
         return None
+    
+    @staticmethod
+    async def get_all_public_lobbies(redis: Redis) -> List[Dict[str, Any]]:
+        """
+        Get all public lobbies
+        
+        Args:
+            redis: Redis client
+            
+        Returns:
+            List of public lobby details
+        """
+        # Scan for all lobby keys
+        lobbies = []
+        cursor = 0
+        
+        while True:
+            cursor, keys = await redis.scan(
+                cursor=cursor,
+                match=f"{LobbyService.LOBBY_KEY_PREFIX}*",
+                count=100
+            )
+            
+            for key in keys:
+                lobby_code = key.replace(LobbyService.LOBBY_KEY_PREFIX, "")
+                lobby = await LobbyService.get_lobby(redis, lobby_code)
+                
+                if lobby and lobby.get("is_public", False):
+                    lobbies.append(lobby)
+            
+            if cursor == 0:
+                break
+        
+        # Sort by created_at (newest first)
+        lobbies.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        return lobbies
+    
+    @staticmethod
+    async def kick_member(
+        redis: Redis,
+        lobby_code: str,
+        host_id: int,
+        user_id_to_kick: int
+    ) -> Dict[str, Any]:
+        """
+        Kick a member from the lobby (host only)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            host_id: Host user ID
+            user_id_to_kick: User ID to kick
+            
+        Returns:
+            Dictionary with kicked member info
+            
+        Raises:
+            NotFoundException: If lobby not found
+            ForbiddenException: If user is not host
+            BadRequestException: If trying to kick self or user not in lobby
+        """
+        # Get lobby
+        lobby = await LobbyService.get_lobby(redis, lobby_code)
+        if not lobby:
+            raise NotFoundException(message="Lobby not found")
+        
+        # Check if user is host
+        if lobby["host_id"] != host_id:
+            raise ForbiddenException(message="Only the host can kick members")
+        
+        # Cannot kick yourself
+        if user_id_to_kick == host_id:
+            raise BadRequestException(message="You cannot kick yourself")
+        
+        # Find member to kick
+        member_to_kick = None
+        for member in lobby["members"]:
+            if member["user_id"] == user_id_to_kick:
+                member_to_kick = member
+                break
+        
+        if not member_to_kick:
+            raise BadRequestException(message="User is not in this lobby")
+        
+        # Remove member
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.zrem(
+                LobbyService._lobby_members_key(lobby_code),
+                json.dumps(member_to_kick)
+            )
+            pipe.delete(LobbyService._user_lobby_key(user_id_to_kick))
+            await pipe.execute()
+        
+        logger.info(f"User {user_id_to_kick} kicked from lobby {lobby_code} by host {host_id}")
+        
+        return {
+            "user_id": user_id_to_kick,
+            "nickname": member_to_kick["nickname"]
+        }
     
     @staticmethod
     async def _close_lobby(redis: Redis, lobby_code: str):

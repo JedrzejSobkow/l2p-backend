@@ -11,6 +11,7 @@ from schemas.lobby_schema import (
     LeaveLobbyRequest,
     UpdateLobbySettingsRequest,
     TransferHostRequest,
+    KickMemberRequest,
     LobbyResponse,
     LobbyCreatedResponse,
     LobbyJoinedResponse,
@@ -19,6 +20,8 @@ from schemas.lobby_schema import (
     LobbyMemberLeftEvent,
     LobbyHostTransferredEvent,
     LobbySettingsUpdatedEvent,
+    MemberKickedEvent,
+    PublicLobbiesResponse,
     LobbyClosedEvent,
     LobbyErrorResponse,
     LobbyMemberResponse,
@@ -58,6 +61,7 @@ class LobbyNamespace(AuthNamespace):
                         host_id=lobby["host_id"],
                         max_players=lobby["max_players"],
                         current_players=lobby["current_players"],
+                        is_public=lobby.get("is_public", False),
                         members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                         created_at=lobby["created_at"]
                     )
@@ -124,7 +128,8 @@ class LobbyNamespace(AuthNamespace):
                 redis=redis,
                 host_id=user_id,
                 host_nickname=user_nickname,
-                max_players=request.max_players
+                max_players=request.max_players,
+                is_public=request.is_public
             )
             
             # Join Socket.IO room
@@ -140,6 +145,7 @@ class LobbyNamespace(AuthNamespace):
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
+                is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"]
             )
@@ -220,6 +226,7 @@ class LobbyNamespace(AuthNamespace):
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
+                is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"]
             )
@@ -379,12 +386,14 @@ class LobbyNamespace(AuthNamespace):
                 redis=redis,
                 lobby_code=lobby_code,
                 user_id=user_id,
-                max_players=request.max_players
+                max_players=request.max_players,
+                is_public=request.is_public
             )
             
             # Notify all members
             settings_updated_event = LobbySettingsUpdatedEvent(
-                max_players=request.max_players
+                max_players=request.max_players,
+                is_public=request.is_public
             )
             await self.emit('settings_updated', settings_updated_event.model_dump(), room=lobby_code)
             
@@ -523,6 +532,7 @@ class LobbyNamespace(AuthNamespace):
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
+                is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"]
             )
@@ -532,6 +542,138 @@ class LobbyNamespace(AuthNamespace):
             logger.error(f"Error getting lobby: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to get lobby',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+    
+    async def on_get_public_lobbies(self, sid, data):
+        """
+        Get all public lobbies
+        
+        Expected data: {} (no parameters needed)
+        """
+        try:
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            # Get all public lobbies
+            redis = get_redis()
+            lobbies = await LobbyService.get_all_public_lobbies(redis)
+            
+            # Convert to response format
+            lobbies_response = [
+                LobbyResponse(
+                    lobby_code=lobby["lobby_code"],
+                    host_id=lobby["host_id"],
+                    max_players=lobby["max_players"],
+                    current_players=lobby["current_players"],
+                    is_public=lobby.get("is_public", False),
+                    members=[LobbyMemberResponse(**m) for m in lobby["members"]],
+                    created_at=lobby["created_at"]
+                )
+                for lobby in lobbies
+            ]
+            
+            response = PublicLobbiesResponse(
+                lobbies=lobbies_response,
+                total=len(lobbies_response)
+            )
+            await self.emit('public_lobbies', response.model_dump(), room=sid)
+            
+        except Exception as e:
+            logger.error(f"Error getting public lobbies: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to get public lobbies',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+    
+    async def on_kick_member(self, sid, data):
+        """
+        Kick a member from lobby (host only)
+        
+        Expected data: {"user_id": int}
+        """
+        try:
+            # Validate input
+            try:
+                request = KickMemberRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            # Get user's current lobby
+            redis = get_redis()
+            lobby_code = await LobbyService.get_user_lobby(redis, user_id)
+            if not lobby_code:
+                error_response = LobbyErrorResponse(
+                    message='You are not in a lobby',
+                    error_code='NOT_IN_LOBBY'
+                )
+                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                return
+            
+            # Kick member
+            result = await LobbyService.kick_member(
+                redis=redis,
+                lobby_code=lobby_code,
+                host_id=user_id,
+                user_id_to_kick=request.user_id
+            )
+            
+            # Get kicked user's sid to force disconnect from lobby room
+            kicked_sid = manager.get_sid(request.user_id)
+            if kicked_sid:
+                await self.leave_room(kicked_sid, lobby_code)
+                # Notify kicked user
+                await self.emit('kicked_from_lobby', {
+                    'lobby_code': lobby_code,
+                    'message': 'You have been kicked from the lobby'
+                }, room=kicked_sid)
+            
+            # Notify all remaining members
+            member_kicked_event = MemberKickedEvent(
+                user_id=result["user_id"],
+                nickname=result["nickname"],
+                kicked_by_id=user_id
+            )
+            await self.emit('member_kicked', member_kicked_event.model_dump(), room=lobby_code)
+            
+            logger.info(f"User {request.user_id} kicked from lobby {lobby_code} by host {user_id}")
+            
+        except (NotFoundException, BadRequestException, ForbiddenException) as e:
+            error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else \
+                        'FORBIDDEN' if isinstance(e, ForbiddenException) else 'BAD_REQUEST'
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=error_code,
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+        except Exception as e:
+            logger.error(f"Error kicking member: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to kick member',
                 error_code='INTERNAL_ERROR'
             )
             await self.emit('lobby_error', error_response.model_dump(), room=sid)

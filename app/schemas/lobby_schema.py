@@ -10,6 +10,7 @@ from datetime import datetime
 class CreateLobbyRequest(BaseModel):
     """Request to create a new lobby"""
     max_players: int = Field(default=6, ge=2, le=6, description="Maximum number of players (2-6)")
+    is_public: bool = Field(default=False, description="Whether the lobby is public or private")
 
 
 class JoinLobbyRequest(BaseModel):
@@ -26,12 +27,18 @@ class JoinLobbyRequest(BaseModel):
 
 class UpdateLobbySettingsRequest(BaseModel):
     """Request to update lobby settings (only host can do this)"""
-    max_players: int = Field(..., ge=2, le=6, description="Maximum number of players (2-6)")
+    max_players: Optional[int] = Field(None, ge=2, le=6, description="Maximum number of players (2-6)")
+    is_public: Optional[bool] = Field(None, description="Whether the lobby is public or private")
 
 
 class TransferHostRequest(BaseModel):
     """Request to transfer host privileges to another member"""
     new_host_id: int = Field(..., description="User ID of the new host")
+
+
+class KickMemberRequest(BaseModel):
+    """Request to kick a member from lobby (host only)"""
+    user_id: int = Field(..., description="User ID of the member to kick")
 
 
 class LeaveLobbyRequest(BaseModel):
@@ -55,6 +62,7 @@ class LobbyResponse(BaseModel):
     host_id: int
     max_players: int
     current_players: int
+    is_public: bool
     members: List[LobbyMemberResponse]
     created_at: datetime
 
@@ -103,14 +111,29 @@ class LobbyHostTransferredEvent(BaseModel):
 
 class LobbySettingsUpdatedEvent(BaseModel):
     """Event emitted when lobby settings are updated"""
-    max_players: int
+    max_players: Optional[int] = None
+    is_public: Optional[bool] = None
     message: str = "Lobby settings updated"
+
+
+class MemberKickedEvent(BaseModel):
+    """Event emitted when a member is kicked from lobby"""
+    user_id: int
+    nickname: str
+    kicked_by_id: int
+    message: str = "A member has been kicked"
 
 
 class LobbyClosedEvent(BaseModel):
     """Event emitted when lobby is closed/disbanded"""
     reason: str = "Lobby has been closed"
     message: str = "Lobby closed"
+
+
+class PublicLobbiesResponse(BaseModel):
+    """Response with list of public lobbies"""
+    lobbies: List[LobbyResponse]
+    total: int
 
 
 class LobbyErrorResponse(BaseModel):
