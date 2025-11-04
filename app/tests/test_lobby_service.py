@@ -127,6 +127,46 @@ class TestLobbyService:
             )
         assert "not found" in str(exc.value.message)
     
+    async def test_join_lobby_user_in_another_lobby(self, redis_client):
+        """Test joining a lobby when user is already in another lobby"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # User 2 joins first lobby
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby1["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        # Create second lobby
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=3,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # User 2 tries to join second lobby (should fail)
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.join_lobby(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                user_nickname="Player2",
+                user_pfp_path=None
+            )
+        assert "already in another lobby" in str(exc.value.message)
+    
     async def test_join_lobby_full(self, redis_client):
         """Test joining a full lobby"""
         # Create lobby with max 2 players
@@ -1000,3 +1040,235 @@ class TestLobbyService:
         lobby_data = await LobbyService.get_lobby(redis_client, lobby_code)
         host_member = next(m for m in lobby_data["members"] if m["user_id"] == 1)
         assert host_member["is_ready"] is True
+    
+    async def test_create_lobby_code_collision_retry(self, redis_client, monkeypatch):
+        """Test lobby code generation with collision (retry logic)"""
+        call_count = 0
+        original_generate = LobbyService._generate_lobby_code
+        
+        def mock_generate():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return "EXIST1"  # This will collide
+            return original_generate()
+        
+        # Pre-create a lobby with code "EXIST1"
+        monkeypatch.setattr(LobbyService, '_generate_lobby_code', lambda: "EXIST1")
+        await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=99,
+            host_nickname="Existing",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Now try to create with collision
+        monkeypatch.setattr(LobbyService, '_generate_lobby_code', mock_generate)
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="TestUser",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        assert lobby["lobby_code"] != "EXIST1"
+        assert call_count >= 3  # Should have retried
+    
+    async def test_create_lobby_max_collision_attempts(self, redis_client, monkeypatch):
+        """Test lobby code generation fails after max attempts"""
+        # Mock to always return existing code
+        monkeypatch.setattr(LobbyService, '_generate_lobby_code', lambda: "EXIST1")
+        
+        # Pre-create lobby
+        await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=99,
+            host_nickname="Existing",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to create another - should fail after 10 attempts
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="TestUser",
+                host_pfp_path=None,
+                max_players=4
+            )
+        assert "Failed to generate unique lobby code" in str(exc.value.message)
+    
+    async def test_join_lobby_already_in_same_lobby(self, redis_client):
+        """Test joining the same lobby twice"""
+        # Create and join lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        # Try to join same lobby again
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.join_lobby(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=2,
+                user_nickname="Player2",
+                user_pfp_path=None
+            )
+        assert "already in this lobby" in str(exc.value.message)
+    
+    async def test_leave_lobby_not_found(self, redis_client):
+        """Test leaving non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.leave_lobby(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                user_id=1
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_update_settings_invalid_max_players_range(self, redis_client):
+        """Test updating max_players outside valid range"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to set max_players too high
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                max_players=10
+            )
+        assert "Invalid max_players" in str(exc.value.message)
+        
+        # Try to set max_players too low
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                max_players=1
+            )
+        assert "Invalid max_players" in str(exc.value.message)
+    
+    async def test_transfer_host_to_self(self, redis_client):
+        """Test transferring host to yourself (should fail)"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.transfer_host(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                current_host_id=1,
+                new_host_id=1
+            )
+        assert "already the host" in str(exc.value.message)
+    
+    async def test_leave_lobby_user_not_in_lobby(self, redis_client):
+        """Test leaving lobby when user is not a member"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to leave when not a member
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.leave_lobby(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=999  # User not in lobby
+            )
+        assert "You are not in this lobby" in str(exc.value.message)
+    
+    async def test_update_settings_lobby_not_found(self, redis_client):
+        """Test updating settings for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                user_id=1,
+                max_players=4
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_transfer_host_lobby_not_found(self, redis_client):
+        """Test transferring host for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.transfer_host(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                current_host_id=1,
+                new_host_id=2
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_close_lobby_with_multiple_members(self, redis_client):
+        """Test _close_lobby internal method with multiple members"""
+        # Create lobby with multiple members
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=3,
+            user_nickname="Player3",
+            user_pfp_path=None
+        )
+        
+        # Close lobby
+        await LobbyService._close_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify lobby is deleted
+        lobby_data = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert lobby_data is None
+        
+        # Verify user lobby mappings are deleted
+        user1_lobby = await redis_client.get(LobbyService._user_lobby_key(1))
+        user2_lobby = await redis_client.get(LobbyService._user_lobby_key(2))
+        user3_lobby = await redis_client.get(LobbyService._user_lobby_key(3))
+        assert user1_lobby is None
+        assert user2_lobby is None
+        assert user3_lobby is None
