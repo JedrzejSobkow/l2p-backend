@@ -51,19 +51,19 @@ class ChatNamespace(AuthNamespace):
                     message='Invalid data format',
                     errors=e.errors()
                 )
-                await self.emit('error', error_response.model_dump(), room=sid)
+                await self.emit('error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
             if not user_id:
                 error_response = SocketErrorResponse(message='Not authenticated. Please reconnect.')
-                await self.emit('error', error_response.model_dump(), room=sid)
+                await self.emit('error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Either content or image_path must be provided
             if not message_dto.content and not message_dto.image_path:
                 error_response = SocketErrorResponse(message='Either content or image_path is required')
-                await self.emit('error', error_response.model_dump(), room=sid)
+                await self.emit('error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get database session
@@ -94,14 +94,14 @@ class ChatNamespace(AuthNamespace):
                     )
                     
                     # Send to sender (confirmation)
-                    await self.emit('message', message_response.model_dump(), room=sid)
+                    await self.emit('message', message_response.model_dump(mode='json'), room=sid)
                     
                     # Send to recipient if online
                     friend_sid = manager.get_sid(recipient['id'])
                     if friend_sid:
                         # Update is_mine for recipient
                         message_response.is_mine = False
-                        await self.emit('message', message_response.model_dump(), room=friend_sid)
+                        await self.emit('message', message_response.model_dump(mode='json'), room=friend_sid)
                         logger.info(f"Message sent to online user {recipient['id']}")
                         
                         # Emit conversation update to recipient
@@ -113,7 +113,7 @@ class ChatNamespace(AuthNamespace):
                             last_message_content=message_dto.content,
                             last_message_is_mine=False
                         )
-                        await self.emit('conversation_updated', conversation_update.model_dump(), room=friend_sid)
+                        await self.emit('conversation_updated', conversation_update.model_dump(mode='json'), room=friend_sid)
                     else:
                         logger.info(f"User {recipient['id']} is offline, message saved to database")
                     
@@ -126,22 +126,22 @@ class ChatNamespace(AuthNamespace):
                         last_message_content=message_dto.content,
                         last_message_is_mine=True
                     )
-                    await self.emit('conversation_updated', conversation_update.model_dump(), room=sid)
+                    await self.emit('conversation_updated', conversation_update.model_dump(mode='json'), room=sid)
                     
                 except HTTPException as e:
                     # Handle HTTP exceptions from service layer
                     logger.error(f"HTTP error sending message: {e.status_code} - {e.detail}")
                     error_response = SocketErrorResponse(message=e.detail)
-                    await self.emit('error', error_response.model_dump(), room=sid)
+                    await self.emit('error', error_response.model_dump(mode='json'), room=sid)
                 except Exception as e:
                     logger.error(f"Error sending message: {str(e)}")
                     error_response = SocketErrorResponse(message=str(e))
-                    await self.emit('error', error_response.model_dump(), room=sid)
+                    await self.emit('error', error_response.model_dump(mode='json'), room=sid)
                 
         except Exception as e:
             logger.error(f"Error in send_message: {str(e)}")
             error_response = SocketErrorResponse(message=f'Failed to send message: {str(e)}')
-            await self.emit('error', error_response.model_dump(), room=sid)
+            await self.emit('error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_typing(self, sid, data):
         """
@@ -175,7 +175,7 @@ class ChatNamespace(AuthNamespace):
                 user_id=user_id,
                 nickname=user_nickname
             )
-            await self.emit('user_typing', typing_response.model_dump(), room=friend_sid)
+            await self.emit('user_typing', typing_response.model_dump(mode='json'), room=friend_sid)
                 
         except Exception as e:
             logger.error(f"Error in typing: {str(e)}")

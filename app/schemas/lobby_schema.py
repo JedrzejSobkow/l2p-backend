@@ -61,6 +61,11 @@ class LobbyMemberResponse(BaseModel):
     is_host: bool
     is_ready: bool = False
     joined_at: datetime
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 
 class LobbyResponse(BaseModel):
@@ -72,6 +77,11 @@ class LobbyResponse(BaseModel):
     is_public: bool
     members: List[LobbyMemberResponse]
     created_at: datetime
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 
 class LobbyCreatedResponse(BaseModel):

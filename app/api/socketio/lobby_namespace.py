@@ -67,7 +67,7 @@ class LobbyNamespace(AuthNamespace):
                         members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                         created_at=lobby["created_at"]
                     )
-                    await self.emit('lobby_state', lobby_response.model_dump(), room=sid)
+                    await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
                     logger.info(f"User {user.id} rejoined lobby {lobby_code}")
         except Exception as e:
             logger.error(f"Error checking user lobby on connect: {str(e)}")
@@ -99,7 +99,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -108,7 +108,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_nickname = manager.get_nickname(user_id)
@@ -120,7 +120,7 @@ class LobbyNamespace(AuthNamespace):
                         message='User not found',
                         error_code='USER_NOT_FOUND'
                     )
-                    await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                     return
                 user_nickname = user.nickname
             
@@ -141,7 +141,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Send response to creator
             response = LobbyCreatedResponse(lobby_code=lobby["lobby_code"])
-            await self.emit('lobby_created', response.model_dump(), room=sid)
+            await self.emit('lobby_created', response.model_dump(mode='json'), room=sid)
             
             # Send full lobby state
             lobby_response = LobbyResponse(
@@ -153,7 +153,7 @@ class LobbyNamespace(AuthNamespace):
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"]
             )
-            await self.emit('lobby_state', lobby_response.model_dump(), room=sid)
+            await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
             
             logger.info(f"User {user_id} created lobby {lobby['lobby_code']}")
             
@@ -163,14 +163,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code='BAD_REQUEST',
                 details=e.details
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error creating lobby: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to create lobby',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_join_lobby(self, sid, data):
         """
@@ -188,7 +188,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -197,7 +197,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_nickname = manager.get_nickname(user_id)
@@ -209,7 +209,7 @@ class LobbyNamespace(AuthNamespace):
                         message='User not found',
                         error_code='USER_NOT_FOUND'
                     )
-                    await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                     return
                 user_nickname = user.nickname
             
@@ -241,7 +241,7 @@ class LobbyNamespace(AuthNamespace):
                 created_at=lobby["created_at"]
             )
             response = LobbyJoinedResponse(lobby=lobby_response)
-            await self.emit('lobby_joined', response.model_dump(), room=sid)
+            await self.emit('lobby_joined', response.model_dump(mode='json'), room=sid)
             
             # Notify all members in lobby about new member
             new_member = next(m for m in lobby["members"] if m["user_id"] == user_id)
@@ -249,7 +249,7 @@ class LobbyNamespace(AuthNamespace):
                 member=LobbyMemberResponse(**new_member),
                 current_players=lobby["current_players"]
             )
-            await self.emit('member_joined', member_joined_event.model_dump(), room=request.lobby_code, skip_sid=sid)
+            await self.emit('member_joined', member_joined_event.model_dump(mode='json'), room=request.lobby_code, skip_sid=sid)
             
             logger.info(f"User {user_id} joined lobby {request.lobby_code}")
             
@@ -259,14 +259,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code='NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST',
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error joining lobby: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to join lobby',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_leave_lobby(self, sid, data):
         """
@@ -284,7 +284,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -293,7 +293,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_nickname = manager.get_nickname(user_id)
@@ -311,7 +311,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Send response to leaver
             response = LobbyLeftResponse()
-            await self.emit('lobby_left', response.model_dump(), room=sid)
+            await self.emit('lobby_left', response.model_dump(mode='json'), room=sid)
             
             # If lobby still exists
             if result is not None:
@@ -321,7 +321,7 @@ class LobbyNamespace(AuthNamespace):
                     nickname=user_nickname or "Unknown",
                     current_players=len(await (await LobbyService.get_lobby(redis, request.lobby_code))["members"]) if await LobbyService.get_lobby(redis, request.lobby_code) else 0
                 )
-                await self.emit('member_left', member_left_event.model_dump(), room=request.lobby_code)
+                await self.emit('member_left', member_left_event.model_dump(mode='json'), room=request.lobby_code)
                 
                 # If host was transferred
                 if result.get("host_transferred"):
@@ -330,7 +330,7 @@ class LobbyNamespace(AuthNamespace):
                         new_host_id=result["new_host_id"],
                         new_host_nickname=result["new_host_nickname"]
                     )
-                    await self.emit('host_transferred', host_transfer_event.model_dump(), room=request.lobby_code)
+                    await self.emit('host_transferred', host_transfer_event.model_dump(mode='json'), room=request.lobby_code)
                 
                 logger.info(f"User {user_id} left lobby {request.lobby_code}")
             else:
@@ -343,14 +343,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code='NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST',
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error leaving lobby: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to leave lobby',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_update_settings(self, sid, data):
         """
@@ -368,7 +368,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -377,7 +377,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's current lobby
@@ -388,7 +388,7 @@ class LobbyNamespace(AuthNamespace):
                     message='You are not in a lobby',
                     error_code='NOT_IN_LOBBY'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Update settings
@@ -405,7 +405,7 @@ class LobbyNamespace(AuthNamespace):
                 max_players=request.max_players,
                 is_public=request.is_public
             )
-            await self.emit('settings_updated', settings_updated_event.model_dump(), room=lobby_code)
+            await self.emit('settings_updated', settings_updated_event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"User {user_id} updated lobby {lobby_code} settings")
             
@@ -417,14 +417,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code=error_code,
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error updating lobby settings: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to update settings',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_transfer_host(self, sid, data):
         """
@@ -442,7 +442,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -451,7 +451,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's current lobby
@@ -462,7 +462,7 @@ class LobbyNamespace(AuthNamespace):
                     message='You are not in a lobby',
                     error_code='NOT_IN_LOBBY'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Transfer host
@@ -479,7 +479,7 @@ class LobbyNamespace(AuthNamespace):
                 new_host_id=result["new_host_id"],
                 new_host_nickname=result["new_host_nickname"]
             )
-            await self.emit('host_transferred', host_transfer_event.model_dump(), room=lobby_code)
+            await self.emit('host_transferred', host_transfer_event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"Host transferred from {user_id} to {request.new_host_id} in lobby {lobby_code}")
             
@@ -491,14 +491,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code=error_code,
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error transferring host: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to transfer host',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_get_lobby(self, sid, data):
         """
@@ -513,7 +513,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's current lobby
@@ -524,7 +524,7 @@ class LobbyNamespace(AuthNamespace):
                     message='You are not in a lobby',
                     error_code='NOT_IN_LOBBY'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             lobby = await LobbyService.get_lobby(redis, lobby_code)
@@ -533,7 +533,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Lobby not found',
                     error_code='NOT_FOUND'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Send lobby state
@@ -546,7 +546,7 @@ class LobbyNamespace(AuthNamespace):
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"]
             )
-            await self.emit('lobby_state', lobby_response.model_dump(), room=sid)
+            await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error getting lobby: {str(e)}")
@@ -554,7 +554,7 @@ class LobbyNamespace(AuthNamespace):
                 message='Failed to get lobby',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_get_public_lobbies(self, sid, data):
         """
@@ -569,7 +569,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get all public lobbies
@@ -594,7 +594,7 @@ class LobbyNamespace(AuthNamespace):
                 lobbies=lobbies_response,
                 total=len(lobbies_response)
             )
-            await self.emit('public_lobbies', response.model_dump(), room=sid)
+            await self.emit('public_lobbies', response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error getting public lobbies: {str(e)}")
@@ -602,7 +602,7 @@ class LobbyNamespace(AuthNamespace):
                 message='Failed to get public lobbies',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_kick_member(self, sid, data):
         """
@@ -620,7 +620,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -629,7 +629,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's current lobby
@@ -640,7 +640,7 @@ class LobbyNamespace(AuthNamespace):
                     message='You are not in a lobby',
                     error_code='NOT_IN_LOBBY'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Kick member
@@ -667,7 +667,7 @@ class LobbyNamespace(AuthNamespace):
                 nickname=result["nickname"],
                 kicked_by_id=user_id
             )
-            await self.emit('member_kicked', member_kicked_event.model_dump(), room=lobby_code)
+            await self.emit('member_kicked', member_kicked_event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"User {request.user_id} kicked from lobby {lobby_code} by host {user_id}")
             
@@ -679,14 +679,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code=error_code,
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error kicking member: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to kick member',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
     async def on_toggle_ready(self, sid, data):
         """
@@ -704,7 +704,7 @@ class LobbyNamespace(AuthNamespace):
                     error_code='VALIDATION_ERROR',
                     details={'errors': e.errors()}
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             user_id = manager.get_user_id(sid)
@@ -713,7 +713,7 @@ class LobbyNamespace(AuthNamespace):
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
                 )
-                await self.emit('lobby_error', error_response.model_dump(), room=sid)
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Toggle ready status
@@ -730,7 +730,7 @@ class LobbyNamespace(AuthNamespace):
                 nickname=result["nickname"],
                 is_ready=result["is_ready"]
             )
-            await self.emit('member_ready_changed', ready_event.model_dump(), room=request.lobby_code)
+            await self.emit('member_ready_changed', ready_event.model_dump(mode='json'), room=request.lobby_code)
             
             logger.info(f"User {user_id} toggled ready to {result['is_ready']} in lobby {request.lobby_code}")
             
@@ -741,14 +741,14 @@ class LobbyNamespace(AuthNamespace):
                 error_code=error_code,
                 details=e.details if hasattr(e, 'details') else None
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
         except Exception as e:
             logger.error(f"Error toggling ready: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to toggle ready status',
                 error_code='INTERNAL_ERROR'
             )
-            await self.emit('lobby_error', error_response.model_dump(), room=sid)
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
 
 
 # Register the namespace

@@ -92,5 +92,3 @@ from api.socketio import sio
 # This allows Socket.IO to handle /socket.io/* paths and pass everything else to FastAPI
 # Namespaces are registered in api/socketio/__init__.py
 app = socketio.ASGIApp(sio, app)
-
-
