@@ -316,10 +316,14 @@ class LobbyNamespace(AuthNamespace):
             # If lobby still exists
             if result is not None:
                 # Notify remaining members
+                # Get updated lobby to get current player count
+                updated_lobby = await LobbyService.get_lobby(redis, request.lobby_code)
+                current_players = len(updated_lobby["members"]) if updated_lobby else 0
+                
                 member_left_event = LobbyMemberLeftEvent(
                     user_id=user_id,
                     nickname=user_nickname or "Unknown",
-                    current_players=len(await (await LobbyService.get_lobby(redis, request.lobby_code))["members"]) if await LobbyService.get_lobby(redis, request.lobby_code) else 0
+                    current_players=current_players
                 )
                 await self.emit('member_left', member_left_event.model_dump(mode='json'), room=request.lobby_code)
                 
