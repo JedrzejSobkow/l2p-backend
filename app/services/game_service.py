@@ -1,0 +1,424 @@
+# app/services/game_service.py
+
+import json
+from typing import Dict, Any, Optional, List, Type
+from datetime import datetime, UTC
+from redis.asyncio import Redis
+from services.game_engine_interface import (
+    GameEngineInterface,
+    GameResult,
+    MoveValidationResult,
+)
+from services.games import GAME_ENGINES
+from exceptions.domain_exceptions import (
+    NotFoundException,
+    BadRequestException,
+    ForbiddenException,
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class GameService:
+    """Service for managing game state and logic using Redis"""
+    
+    # Redis key patterns
+    GAME_STATE_KEY_PREFIX = "game_state:"
+    GAME_ENGINE_KEY_PREFIX = "game_engine:"
+    LOBBY_GAME_KEY_PREFIX = "lobby_game:"
+    GAME_TTL = 3600 * 2  # 2 hours TTL for games
+    
+    # Registry of available game engines
+    GAME_ENGINES = GAME_ENGINES
+    
+    @staticmethod
+    def _game_state_key(lobby_code: str) -> str:
+        """Get Redis key for game state"""
+        return f"{GameService.GAME_STATE_KEY_PREFIX}{lobby_code}"
+    
+    @staticmethod
+    def _game_engine_key(lobby_code: str) -> str:
+        """Get Redis key for game engine configuration"""
+        return f"{GameService.GAME_ENGINE_KEY_PREFIX}{lobby_code}"
+    
+    @staticmethod
+    def _lobby_game_key(lobby_code: str) -> str:
+        """Get Redis key for lobby-game mapping"""
+        return f"{GameService.LOBBY_GAME_KEY_PREFIX}{lobby_code}"
+    
+    @staticmethod
+    def get_available_games() -> List[str]:
+        """Get list of available game types"""
+        return list(GameService.GAME_ENGINES.keys())
+    
+    @staticmethod
+    async def create_game(
+        redis: Redis,
+        lobby_code: str,
+        game_name: str,
+        player_ids: List[int],
+        rules: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new game instance bound to a lobby.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code this game is bound to
+            game_name: Name of the game type (e.g., 'tictactoe')
+            player_ids: List of player IDs participating
+            rules: Optional custom rules for the game
+            
+        Returns:
+            Dictionary with game initialization details
+            
+        Raises:
+            BadRequestException: If game already exists for lobby or invalid game name
+        """
+        # Check if game already exists for this lobby
+        existing_game = await redis.exists(GameService._game_state_key(lobby_code))
+        if existing_game:
+            # Check if existing game is finished
+            state_raw = await redis.get(GameService._game_state_key(lobby_code))
+            if state_raw:
+                state_data = json.loads(state_raw)
+                game_result = state_data.get("result")
+                
+                # If game is still in progress, don't allow creating a new one
+                if game_result == GameResult.IN_PROGRESS.value:
+                    raise BadRequestException(
+                        message="A game is already in progress for this lobby",
+                        details={"lobby_code": lobby_code}
+                    )
+                
+                # If game is finished, delete it to make room for new game
+                logger.info(f"Deleting finished game (result: {game_result}) to create new game for lobby {lobby_code}")
+                await GameService.delete_game(redis, lobby_code)
+        
+        # Validate game name
+        if game_name not in GameService.GAME_ENGINES:
+            raise BadRequestException(
+                message=f"Unknown game type: {game_name}",
+                details={
+                    "available_games": GameService.get_available_games(),
+                    "requested_game": game_name
+                }
+            )
+        
+        # Create game engine instance
+        engine_class = GameService.GAME_ENGINES[game_name]
+        try:
+            engine = engine_class(lobby_code, player_ids, rules)
+        except ValueError as e:
+            raise BadRequestException(
+                message=f"Failed to create game: {str(e)}",
+                details={"game_name": game_name, "player_ids": player_ids}
+            )
+        
+        # Initialize game state
+        game_state = engine.initialize_game_state()
+        
+        # Add metadata to game state
+        now = datetime.now(UTC)
+        game_state["created_at"] = now.isoformat()
+        game_state["current_turn_player_id"] = engine.current_player_id
+        game_state["result"] = GameResult.IN_PROGRESS.value
+        game_state["winner_id"] = None
+        
+        # Prepare engine configuration for storage
+        engine_config = {
+            "game_name": game_name,
+            "lobby_code": lobby_code,
+            "player_ids": player_ids,
+            "rules": rules or {},
+            "current_turn_index": engine.current_turn_index,
+        }
+        
+        # Store in Redis
+        async with redis.pipeline(transaction=True) as pipe:
+            # Store game state
+            pipe.set(
+                GameService._game_state_key(lobby_code),
+                json.dumps(game_state),
+                ex=GameService.GAME_TTL
+            )
+            
+            # Store engine configuration
+            pipe.set(
+                GameService._game_engine_key(lobby_code),
+                json.dumps(engine_config),
+                ex=GameService.GAME_TTL
+            )
+            
+            # Map lobby to game
+            pipe.set(
+                GameService._lobby_game_key(lobby_code),
+                game_name,
+                ex=GameService.GAME_TTL
+            )
+            
+            await pipe.execute()
+        
+        logger.info(f"Game '{game_name}' created for lobby {lobby_code} with players {player_ids}")
+        
+        # Get static game info
+        engine_class = GameService.GAME_ENGINES[game_name]
+        game_info = engine_class.get_game_info()
+        
+        return {
+            "lobby_code": lobby_code,
+            "game_name": game_name,
+            "game_state": game_state,
+            "game_info": game_info,
+            "current_turn_player_id": engine.current_player_id,
+            "created_at": now,
+        }
+    
+    @staticmethod
+    async def get_game(redis: Redis, lobby_code: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current game state and configuration.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            
+        Returns:
+            Dictionary with game state and config or None if not found
+        """
+        # Get game state and engine config
+        state_raw, config_raw = await redis.mget([
+            GameService._game_state_key(lobby_code),
+            GameService._game_engine_key(lobby_code)
+        ])
+        
+        if not state_raw or not config_raw:
+            return None
+        
+        game_state = json.loads(state_raw)
+        engine_config = json.loads(config_raw)
+        
+        return {
+            "game_state": game_state,
+            "engine_config": engine_config,
+            "lobby_code": lobby_code,
+        }
+    
+    @staticmethod
+    async def _load_engine(redis: Redis, lobby_code: str) -> Optional[GameEngineInterface]:
+        """
+        Load and reconstruct the game engine from Redis.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            
+        Returns:
+            GameEngineInterface instance or None if not found
+        """
+        config_raw = await redis.get(GameService._game_engine_key(lobby_code))
+        if not config_raw:
+            return None
+        
+        config = json.loads(config_raw)
+        
+        game_name = config["game_name"]
+        if game_name not in GameService.GAME_ENGINES:
+            logger.error(f"Unknown game type in storage: {game_name}")
+            return None
+        
+        # Reconstruct engine
+        engine_class = GameService.GAME_ENGINES[game_name]
+        engine = engine_class(
+            config["lobby_code"],
+            config["player_ids"],
+            config["rules"]
+        )
+        
+        # Restore turn state
+        engine.current_turn_index = config["current_turn_index"]
+        
+        return engine
+    
+    @staticmethod
+    async def _save_engine(redis: Redis, engine: GameEngineInterface):
+        """
+        Save the game engine state to Redis.
+        
+        Args:
+            redis: Redis client
+            engine: GameEngineInterface instance
+        """
+        engine_config = {
+            "game_name": engine.get_game_name(),
+            "lobby_code": engine.lobby_code,
+            "player_ids": engine.player_ids,
+            "rules": engine.rules,
+            "current_turn_index": engine.current_turn_index,
+        }
+        
+        await redis.set(
+            GameService._game_engine_key(engine.lobby_code),
+            json.dumps(engine_config),
+            ex=GameService.GAME_TTL
+        )
+    
+    @staticmethod
+    async def make_move(
+        redis: Redis,
+        lobby_code: str,
+        player_id: int,
+        move_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Process a player's move.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            player_id: ID of the player making the move
+            move_data: Move data specific to the game
+            
+        Returns:
+            Dictionary with updated game state and result
+            
+        Raises:
+            NotFoundException: If game not found
+            BadRequestException: If move is invalid
+        """
+        # Load engine and game state
+        engine = await GameService._load_engine(redis, lobby_code)
+        if not engine:
+            raise NotFoundException(
+                message="Game not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        state_raw = await redis.get(GameService._game_state_key(lobby_code))
+        if not state_raw:
+            raise NotFoundException(
+                message="Game state not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        game_state = json.loads(state_raw)
+        
+        # Validate move
+        validation_result = engine.validate_move(game_state, player_id, move_data)
+        if not validation_result.valid:
+            raise BadRequestException(
+                message=validation_result.error_message or "Invalid move",
+                details={"move_data": move_data}
+            )
+        
+        # Apply move
+        game_state = engine.apply_move(game_state, player_id, move_data)
+        
+        # Check game result
+        result, winner_id = engine.check_game_result(game_state)
+        
+        # Update metadata
+        game_state["result"] = result.value
+        game_state["winner_id"] = winner_id
+        
+        # Advance turn if game is still in progress
+        if result == GameResult.IN_PROGRESS:
+            engine.advance_turn()
+            game_state["current_turn_player_id"] = engine.current_player_id
+        
+        # Save updated state
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.set(
+                GameService._game_state_key(lobby_code),
+                json.dumps(game_state),
+                ex=GameService.GAME_TTL
+            )
+            await GameService._save_engine(redis, engine)
+            await pipe.execute()
+        
+        logger.info(f"Move processed for lobby {lobby_code} by player {player_id}. Result: {result.value}")
+        
+        return {
+            "game_state": game_state,
+            "result": result.value,
+            "winner_id": winner_id,
+            "current_turn_player_id": game_state.get("current_turn_player_id"),
+        }
+    
+    @staticmethod
+    async def forfeit_game(
+        redis: Redis,
+        lobby_code: str,
+        player_id: int
+    ) -> Dict[str, Any]:
+        """
+        Handle a player forfeiting the game.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            player_id: ID of the player forfeiting
+            
+        Returns:
+            Dictionary with updated game state
+            
+        Raises:
+            NotFoundException: If game not found
+        """
+        # Load engine and game state
+        engine = await GameService._load_engine(redis, lobby_code)
+        if not engine:
+            raise NotFoundException(
+                message="Game not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        state_raw = await redis.get(GameService._game_state_key(lobby_code))
+        if not state_raw:
+            raise NotFoundException(
+                message="Game state not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        game_state = json.loads(state_raw)
+        
+        # Process forfeit
+        result, winner_id = engine.forfeit_game(player_id)
+        
+        # Update game state
+        game_state["result"] = result.value
+        game_state["winner_id"] = winner_id
+        game_state["forfeited_by"] = player_id
+        
+        # Save updated state
+        await redis.set(
+            GameService._game_state_key(lobby_code),
+            json.dumps(game_state),
+            ex=GameService.GAME_TTL
+        )
+        
+        logger.info(f"Player {player_id} forfeited game in lobby {lobby_code}")
+        
+        return {
+            "game_state": game_state,
+            "result": result.value,
+            "winner_id": winner_id,
+        }
+    
+    @staticmethod
+    async def delete_game(redis: Redis, lobby_code: str):
+        """
+        Delete a game and clean up all related data.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+        """
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.delete(GameService._game_state_key(lobby_code))
+            pipe.delete(GameService._game_engine_key(lobby_code))
+            pipe.delete(GameService._lobby_game_key(lobby_code))
+            await pipe.execute()
+        
+        logger.info(f"Game deleted for lobby {lobby_code}")

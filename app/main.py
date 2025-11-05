@@ -85,6 +85,10 @@ app.include_router(chat.router, prefix="/v1")
 from api.routes import lobby
 app.include_router(lobby.router, prefix="/v1")
 
+# Import game router
+from api.routes import game
+app.include_router(game.router, prefix="/v1")
+
 # Import Socket.IO instance and register all namespaces
 from api.socketio import sio
 
