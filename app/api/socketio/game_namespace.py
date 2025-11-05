@@ -60,7 +60,7 @@ class GameNamespace(AuthNamespace):
                 # Send current game state
                 await self.emit(
                     "game_state",
-                    GameStateResponse(**game).dict(),
+                    GameStateResponse(**game).model_dump(mode='json'),
                     room=sid
                 )
 
@@ -85,7 +85,7 @@ class GameNamespace(AuthNamespace):
                     error="Not authenticated",
                     details={"message": "Authentication required"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             user = await self.get_authenticated_user(sid)
@@ -94,7 +94,7 @@ class GameNamespace(AuthNamespace):
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Validate request
@@ -151,10 +151,10 @@ class GameNamespace(AuthNamespace):
                 game_info=game_result["game_info"],
                 current_turn_player_id=game_result["current_turn_player_id"]
             )
-            await self.emit("game_started", event.dict(), room=sid)
+            await self.emit("game_started", event.model_dump(mode='json'), room=sid)
             
             # Also broadcast to the room (in case other players are already connected)
-            await self.emit("game_started", event.dict(), room=lobby_code)
+            await self.emit("game_started", event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"Game '{request.game_name}' created for lobby {lobby_code}")
             
@@ -163,14 +163,14 @@ class GameNamespace(AuthNamespace):
                 error="Validation error",
                 details={"errors": e.errors()}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_response = GameErrorResponse(
                 error=e.message,
                 details=e.details
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error creating game: {e}", exc_info=True)
@@ -178,7 +178,7 @@ class GameNamespace(AuthNamespace):
                 error="Failed to create game",
                 details={"message": str(e)}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
 
     async def on_make_move(self, sid, data):
         """
@@ -197,7 +197,7 @@ class GameNamespace(AuthNamespace):
                     error="Not authenticated",
                     details={"message": "Authentication required"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             user = await self.get_authenticated_user(sid)
@@ -206,7 +206,7 @@ class GameNamespace(AuthNamespace):
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Validate request
@@ -238,7 +238,7 @@ class GameNamespace(AuthNamespace):
                 game_state=move_result["game_state"],
                 current_turn_player_id=move_result.get("current_turn_player_id")
             )
-            await self.emit("move_made", move_event.dict(), room=lobby_code)
+            await self.emit("move_made", move_event.model_dump(mode='json'), room=lobby_code)
             
             # If game ended, broadcast game ended event
             if move_result["result"] != "in_progress":
@@ -248,7 +248,7 @@ class GameNamespace(AuthNamespace):
                     winner_id=move_result["winner_id"],
                     game_state=move_result["game_state"]
                 )
-                await self.emit("game_ended", end_event.dict(), room=lobby_code)
+                await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"Move made by user {user.id} in lobby {lobby_code}")
             
@@ -257,14 +257,14 @@ class GameNamespace(AuthNamespace):
                 error="Validation error",
                 details={"errors": e.errors()}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_response = GameErrorResponse(
                 error=e.message,
                 details=e.details
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error making move: {e}", exc_info=True)
@@ -272,7 +272,7 @@ class GameNamespace(AuthNamespace):
                 error="Failed to make move",
                 details={"message": str(e)}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
 
     async def on_forfeit(self, sid, data):
         """
@@ -291,7 +291,7 @@ class GameNamespace(AuthNamespace):
                     error="Not authenticated",
                     details={"message": "Authentication required"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             user = await self.get_authenticated_user(sid)
@@ -300,7 +300,7 @@ class GameNamespace(AuthNamespace):
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's lobby
@@ -327,7 +327,7 @@ class GameNamespace(AuthNamespace):
                 winner_id=forfeit_result["winner_id"],
                 game_state=forfeit_result["game_state"]
             )
-            await self.emit("player_forfeited", forfeit_event.dict(), room=lobby_code)
+            await self.emit("player_forfeited", forfeit_event.model_dump(mode='json'), room=lobby_code)
             
             # Broadcast game ended event
             end_event = GameEndedEvent(
@@ -336,7 +336,7 @@ class GameNamespace(AuthNamespace):
                 winner_id=forfeit_result["winner_id"],
                 game_state=forfeit_result["game_state"]
             )
-            await self.emit("game_ended", end_event.dict(), room=lobby_code)
+            await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
             
             logger.info(f"User {user.id} forfeited game in lobby {lobby_code}")
             
@@ -345,7 +345,7 @@ class GameNamespace(AuthNamespace):
                 error=e.message,
                 details=e.details
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error forfeiting game: {e}", exc_info=True)
@@ -353,7 +353,7 @@ class GameNamespace(AuthNamespace):
                 error="Failed to forfeit game",
                 details={"message": str(e)}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
 
     async def on_get_game_state(self, sid, data):
         """
@@ -372,7 +372,7 @@ class GameNamespace(AuthNamespace):
                     error="Not authenticated",
                     details={"message": "Authentication required"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             user = await self.get_authenticated_user(sid)
@@ -381,7 +381,7 @@ class GameNamespace(AuthNamespace):
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
                 )
-                await self.emit("game_error", error_response.dict(), room=sid)
+                await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
             # Get user's lobby
@@ -404,14 +404,14 @@ class GameNamespace(AuthNamespace):
             
             # Send game state to requester
             response = GameStateResponse(**game)
-            await self.emit("game_state", response.dict(), room=sid)
+            await self.emit("game_state", response.model_dump(mode='json'), room=sid)
             
         except (NotFoundException, BadRequestException) as e:
             error_response = GameErrorResponse(
                 error=e.message,
                 details=e.details
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
             
         except Exception as e:
             logger.error(f"Error getting game state: {e}", exc_info=True)
@@ -419,7 +419,7 @@ class GameNamespace(AuthNamespace):
                 error="Failed to get game state",
                 details={"message": str(e)}
             )
-            await self.emit("game_error", error_response.dict(), room=sid)
+            await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
 
 
 # Register the namespace

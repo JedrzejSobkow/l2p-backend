@@ -128,7 +128,7 @@ class TimeoutChecker:
                     # Emit to the /game namespace, to the specific lobby room
                     await self.sio.emit(
                         "game_ended",
-                        end_event.dict(),
+                        end_event.model_dump(mode='json'),
                         room=lobby_code,
                         namespace="/game"
                     )
@@ -167,7 +167,7 @@ class TimeoutChecker:
                     
                     await self.sio.emit(
                         "move_made",
-                        skip_event.dict(),
+                        skip_event.model_dump(mode='json'),
                         room=lobby_code,
                         namespace="/game"
                     )
