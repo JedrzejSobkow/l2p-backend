@@ -50,7 +50,7 @@ class TicTacToeEngine(GameEngineInterface):
             player_ids[1]: "O"
         }
     
-    def initialize_game_state(self) -> Dict[str, Any]:
+    def _initialize_game_specific_state(self) -> Dict[str, Any]:
         """Initialize an empty tic-tac-toe board"""
         board = [[None for _ in range(self.board_size)] for _ in range(self.board_size)]
         
@@ -61,7 +61,7 @@ class TicTacToeEngine(GameEngineInterface):
             "player_symbols": self.player_symbols,
         }
     
-    def validate_move(self, game_state: Dict[str, Any], player_id: int, move_data: Dict[str, Any]) -> MoveValidationResult:
+    def _validate_game_specific_move(self, game_state: Dict[str, Any], player_id: int, move_data: Dict[str, Any]) -> MoveValidationResult:
         """
         Validate a tic-tac-toe move.
         
@@ -69,14 +69,6 @@ class TicTacToeEngine(GameEngineInterface):
         - row: int (0 to board_size-1)
         - col: int (0 to board_size-1)
         """
-        # Check if it's the player's turn
-        if player_id != self.current_player_id:
-            return MoveValidationResult(False, "It's not your turn")
-        
-        # Check if game is still in progress
-        if self.game_result != GameResult.IN_PROGRESS:
-            return MoveValidationResult(False, "Game has already ended")
-        
         # Validate move data structure
         if "row" not in move_data or "col" not in move_data:
             return MoveValidationResult(False, "Move must contain 'row' and 'col' fields")
@@ -219,6 +211,18 @@ class TicTacToeEngine(GameEngineInterface):
                     max=5,
                     default=3,
                     description="Number of symbols in a row needed to win"
+                ),
+                "timeout_type": GameRuleOption(
+                    type="string",
+                    default="none",
+                    description="Type of timeout: 'none' (no timeout), 'total_time' (total time per player), or 'per_turn' (time limit per turn)"
+                ),
+                "timeout_seconds": GameRuleOption(
+                    type="integer",
+                    min=10,
+                    max=3600,
+                    default=300,
+                    description="Timeout duration in seconds (e.g., 300 for 5 minutes). Only applies when timeout_type is not 'none'"
                 )
             },
             turn_based=True,

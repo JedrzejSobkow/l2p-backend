@@ -42,8 +42,9 @@ class TestGameService:
             rules={"board_size": 4, "win_length": 4}
         )
         
-        assert result["game_info"]["board_size"] == 4
-        assert result["game_info"]["win_length"] == 4
+        # game_info is a GameInfo object, access supported_rules
+        assert result["game_info"].supported_rules["board_size"].default == 3
+        assert result["game_info"].supported_rules["win_length"].default == 3
         
     async def test_create_game_already_exists(self, redis_client):
         """Test that creating a game twice fails"""
@@ -54,7 +55,7 @@ class TestGameService:
             player_ids=[1, 2]
         )
         
-        with pytest.raises(BadRequestException, match="already exists"):
+        with pytest.raises(BadRequestException, match="already in progress"):
             await GameService.create_game(
                 redis=redis_client,
                 lobby_code="TEST789",

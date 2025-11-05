@@ -83,6 +83,14 @@ class AvailableGamesResponse(BaseModel):
     games: List[str]
 
 
+class TimingInfoResponse(BaseModel):
+    """Response with timing information for a game"""
+    timeout_type: str
+    timeout_seconds: int
+    current_player_id: int
+    player_time_remaining: Optional[Dict[str, Optional[float]]] = None
+
+
 # Event schemas (for Socket.IO broadcasts)
 class GameStartedEvent(BaseModel):
     """Event when a game starts"""

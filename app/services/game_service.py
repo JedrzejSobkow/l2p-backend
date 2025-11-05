@@ -126,6 +126,9 @@ class GameService:
         game_state["result"] = GameResult.IN_PROGRESS.value
         game_state["winner_id"] = None
         
+        # Start the first turn's timer
+        game_state = engine.start_turn(game_state)
+        
         # Prepare engine configuration for storage
         engine_config = {
             "game_name": game_name,
@@ -159,6 +162,9 @@ class GameService:
             )
             
             await pipe.execute()
+        
+        # Set initial timeout key if timeout is configured
+        await GameService._set_timeout_key(redis, engine, game_state, lobby_code)
         
         logger.info(f"Game '{game_name}' created for lobby {lobby_code} with players {player_ids}")
         
@@ -304,6 +310,48 @@ class GameService:
         
         game_state = json.loads(state_raw)
         
+        # Check for timeout before validating move
+        timeout_occurred, timeout_winner_id = engine.check_timeout(game_state)
+        if timeout_occurred:
+            # Check if this ends the game or just skips the turn
+            if timeout_winner_id is not None or engine.game_result != GameResult.IN_PROGRESS:
+                # Game ended by timeout
+                game_state["result"] = GameResult.TIMEOUT.value
+                game_state["winner_id"] = timeout_winner_id
+                
+                # Save the timeout result
+                await redis.set(
+                    GameService._game_state_key(lobby_code),
+                    json.dumps(game_state),
+                    ex=GameService.GAME_TTL
+                )
+                
+                raise BadRequestException(
+                    message="Time limit exceeded - game ended",
+                    details={"result": "timeout", "winner_id": timeout_winner_id}
+                )
+            else:
+                # Turn is skipped, advance to next player
+                logger.info(f"Player {player_id} timed out - skipping turn in lobby {lobby_code}")
+                game_state = engine.consume_turn_time(game_state)
+                engine.advance_turn()
+                game_state["current_turn_player_id"] = engine.current_player_id
+                game_state = engine.start_turn(game_state)
+                
+                # Save state and update timeout key
+                await redis.set(
+                    GameService._game_state_key(lobby_code),
+                    json.dumps(game_state),
+                    ex=GameService.GAME_TTL
+                )
+                await GameService._save_engine(redis, engine)
+                await GameService._set_timeout_key(redis, engine, game_state, lobby_code)
+                
+                raise BadRequestException(
+                    message="Time limit exceeded - your turn was skipped",
+                    details={"skipped": True, "current_turn_player_id": engine.current_player_id}
+                )
+        
         # Validate move
         validation_result = engine.validate_move(game_state, player_id, move_data)
         if not validation_result.valid:
@@ -314,6 +362,9 @@ class GameService:
         
         # Apply move
         game_state = engine.apply_move(game_state, player_id, move_data)
+        
+        # Consume time used for this move
+        game_state = engine.consume_turn_time(game_state)
         
         # Check game result
         result, winner_id = engine.check_game_result(game_state)
@@ -326,6 +377,8 @@ class GameService:
         if result == GameResult.IN_PROGRESS:
             engine.advance_turn()
             game_state["current_turn_player_id"] = engine.current_player_id
+            # Start the next turn's timer
+            game_state = engine.start_turn(game_state)
         
         # Save updated state
         async with redis.pipeline(transaction=True) as pipe:
@@ -336,6 +389,12 @@ class GameService:
             )
             await GameService._save_engine(redis, engine)
             await pipe.execute()
+        
+        # Update timeout key for next turn or clear it if game ended
+        if result == GameResult.IN_PROGRESS:
+            await GameService._set_timeout_key(redis, engine, game_state, lobby_code)
+        else:
+            await GameService._clear_timeout_key(redis, lobby_code)
         
         logger.info(f"Move processed for lobby {lobby_code} by player {player_id}. Result: {result.value}")
         
@@ -398,6 +457,9 @@ class GameService:
             ex=GameService.GAME_TTL
         )
         
+        # Clear timeout key since game ended
+        await GameService._clear_timeout_key(redis, lobby_code)
+        
         logger.info(f"Player {player_id} forfeited game in lobby {lobby_code}")
         
         return {
@@ -405,6 +467,95 @@ class GameService:
             "result": result.value,
             "winner_id": winner_id,
         }
+    
+    @staticmethod
+    async def get_timing_info(redis: Redis, lobby_code: str) -> Optional[Dict[str, Any]]:
+        """
+        Get timing information for the current game.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            
+        Returns:
+            Dictionary with timing information or None if game not found
+        """
+        engine = await GameService._load_engine(redis, lobby_code)
+        if not engine:
+            return None
+        
+        state_raw = await redis.get(GameService._game_state_key(lobby_code))
+        if not state_raw:
+            return None
+        
+        game_state = json.loads(state_raw)
+        timing = game_state.get("timing", {})
+        
+        # Build timing info response
+        timing_info = {
+            "timeout_type": timing.get("timeout_type", "none"),
+            "timeout_seconds": timing.get("timeout_seconds", 0),
+            "current_player_id": engine.current_player_id,
+        }
+        
+        # Add player-specific time remaining
+        if timing.get("timeout_type") != "none":
+            player_times = {}
+            for player_id in engine.player_ids:
+                remaining_time = engine.get_remaining_time(game_state, player_id)
+                player_times[str(player_id)] = remaining_time
+            timing_info["player_time_remaining"] = player_times
+        
+        return timing_info
+    
+    @staticmethod
+    async def _set_timeout_key(redis: Redis, engine, game_state: Dict[str, Any], lobby_code: str):
+        """
+        Set a Redis key with TTL for game timeout.
+        When the key expires, it triggers a keyspace notification that ends the game.
+        
+        Args:
+            redis: Redis client
+            engine: Game engine instance
+            game_state: Current game state
+            lobby_code: The lobby code
+        """
+        from services.timeout_checker import TimeoutChecker
+        from services.game_engine_interface import TimeoutType
+        
+        # Only set timeout key if timeout is configured
+        if engine.timeout_type == TimeoutType.NONE:
+            return
+        
+        # Get remaining time for current player
+        remaining_time = engine.get_remaining_time(game_state)
+        
+        if remaining_time is None or remaining_time <= 0:
+            # No time remaining, don't set key (game should end)
+            return
+        
+        # Set a Redis key that expires when time runs out
+        # We add 1 second buffer to account for Redis timing precision
+        ttl_seconds = int(remaining_time) + 1
+        timeout_key = TimeoutChecker.get_timeout_key(lobby_code)
+        
+        await redis.set(timeout_key, "timeout", ex=ttl_seconds)
+        logger.debug(f"Set timeout key for lobby {lobby_code} with TTL {ttl_seconds}s")
+    
+    @staticmethod
+    async def _clear_timeout_key(redis: Redis, lobby_code: str):
+        """
+        Clear the timeout key when game ends.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+        """
+        from services.timeout_checker import TimeoutChecker
+        
+        timeout_key = TimeoutChecker.get_timeout_key(lobby_code)
+        await redis.delete(timeout_key)
+        logger.debug(f"Cleared timeout key for lobby {lobby_code}")
     
     @staticmethod
     async def delete_game(redis: Redis, lobby_code: str):
@@ -420,5 +571,8 @@ class GameService:
             pipe.delete(GameService._game_engine_key(lobby_code))
             pipe.delete(GameService._lobby_game_key(lobby_code))
             await pipe.execute()
+        
+        # Also clear timeout key
+        await GameService._clear_timeout_key(redis, lobby_code)
         
         logger.info(f"Game deleted for lobby {lobby_code}")
