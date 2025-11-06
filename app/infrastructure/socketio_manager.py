@@ -18,8 +18,8 @@ class ConnectionManager:
     """Manages Socket.IO connections for real-time features"""
     
     def __init__(self):
-        # Maps user_id to their session_id (sid)
-        self.active_connections: Dict[int, str] = {}
+        # Maps user_id to list of their session_ids (sids) - supports multiple namespaces
+        self.active_connections: Dict[int, list[str]] = {}
         # Maps session_id to user_id
         self.sid_to_user: Dict[str, int] = {}
         # Maps session_id to user email (for reference)
@@ -29,15 +29,13 @@ class ConnectionManager:
     
     def connect(self, sid: str, user_id: int, email: str, nickname: str = None):
         """Register a user's connection"""
-        # If user already connected from another session, disconnect old session
-        if user_id in self.active_connections:
-            old_sid = self.active_connections[user_id]
-            if old_sid in self.sid_to_user:
-                del self.sid_to_user[old_sid]
-            if old_sid in self.sid_to_email:
-                del self.sid_to_email[old_sid]
+        # Add sid to user's list of connections
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
         
-        self.active_connections[user_id] = sid
+        if sid not in self.active_connections[user_id]:
+            self.active_connections[user_id].append(sid)
+        
         self.sid_to_user[sid] = user_id
         self.sid_to_email[sid] = email
         
@@ -53,11 +51,17 @@ class ConnectionManager:
             user_id = self.sid_to_user[sid]
             email = self.sid_to_email.get(sid, "unknown")
             
-            # Clean up nickname cache
-            if user_id in self.user_to_nickname:
-                del self.user_to_nickname[user_id]
+            # Remove this specific sid from user's connections
+            if user_id in self.active_connections:
+                if sid in self.active_connections[user_id]:
+                    self.active_connections[user_id].remove(sid)
+                
+                # If user has no more connections, clean up nickname cache
+                if not self.active_connections[user_id]:
+                    del self.active_connections[user_id]
+                    if user_id in self.user_to_nickname:
+                        del self.user_to_nickname[user_id]
             
-            del self.active_connections[user_id]
             del self.sid_to_user[sid]
             if sid in self.sid_to_email:
                 del self.sid_to_email[sid]
@@ -68,12 +72,17 @@ class ConnectionManager:
         return self.sid_to_user.get(sid)
     
     def get_sid(self, user_id: int) -> Optional[str]:
-        """Get session_id from user_id"""
-        return self.active_connections.get(user_id)
+        """Get first session_id from user_id (for backwards compatibility)"""
+        sessions = self.active_connections.get(user_id, [])
+        return sessions[0] if sessions else None
+    
+    def get_user_sessions(self, namespace: str, user_id: int) -> list[str]:
+        """Get all session_ids for a user (for sending to multiple namespaces)"""
+        return self.active_connections.get(user_id, [])
     
     def is_user_online(self, user_id: int) -> bool:
         """Check if user is currently connected"""
-        return user_id in self.active_connections
+        return user_id in self.active_connections and len(self.active_connections[user_id]) > 0
     
     def get_nickname(self, user_id: int) -> Optional[str]:
         """Get cached nickname from user_id"""

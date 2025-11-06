@@ -707,6 +707,46 @@ class TestGetRecentConversations:
         assert result.conversations[0].friend_id == test_user_2.id
         assert result.conversations[1].friend_id == test_user_3.id
     
+    async def test_get_recent_conversations_friend_as_user2(
+        self,
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser,
+        test_user_2: RegisteredUser
+    ):
+        """Test that conversations work when friend is user2 in the friendship"""
+        # Arrange - Create friendship where current user is user_id_2
+        friendship = Friendship(
+            user_id_1=test_user_2.id,  # Friend is user1
+            user_id_2=test_user_1.id,  # Current user is user2
+            status="accepted"
+        )
+        db_session.add(friendship)
+        await db_session.commit()
+        await db_session.refresh(friendship)
+        
+        # Create a message
+        msg = ChatMessage(
+            friendship_id=friendship.id_friendship,
+            sender_id=test_user_2.id,
+            content="Hello from user2 position!"
+        )
+        db_session.add(msg)
+        await db_session.commit()
+        
+        # Act - Get conversations for test_user_1 (who is user_id_2 in the friendship)
+        result = await ChatService.get_recent_conversations(
+            session=db_session,
+            user_id=test_user_1.id
+        )
+        
+        # Assert - Should correctly identify test_user_2 as the friend
+        assert len(result.conversations) == 1
+        conv = result.conversations[0]
+        assert conv.friend_id == test_user_2.id
+        assert conv.friend_nickname == test_user_2.nickname
+        assert conv.last_message_content == "Hello from user2 position!"
+        assert conv.last_message_is_mine is False
+    
     async def test_get_recent_conversations_limit(
         self,
         db_session: AsyncSession,
@@ -851,6 +891,39 @@ class TestValidateImagePath:
             )
         
         assert exc_info.value.message == "Image file not found in storage"
+    
+    @patch('services.chat_service.minio_connection')
+    def test_validate_image_path_file_existence_check_error(self, mock_minio):
+        """Test validating image path when file existence check raises non-domain exception"""
+        # Arrange - Mock file_exists to raise a generic exception (e.g., network error)
+        mock_minio.file_exists.side_effect = Exception("Network error checking file")
+        
+        # Act - Should log warning but not raise exception
+        result = ChatService.validate_image_path(
+            "l2p-bucket/chat-images/123/20231029/uuid.jpg",
+            123,
+            verify_exists=True
+        )
+        
+        # Assert - Should return True despite the error (graceful degradation)
+        assert result is True
+    
+    @patch('services.chat_service.minio_connection')
+    def test_validate_image_path_file_exists_success(self, mock_minio):
+        """Test validating image path when file exists"""
+        # Arrange
+        mock_minio.file_exists.return_value = True
+        
+        # Act
+        result = ChatService.validate_image_path(
+            "l2p-bucket/chat-images/123/20231029/uuid.jpg",
+            123,
+            verify_exists=True
+        )
+        
+        # Assert
+        assert result is True
+        mock_minio.file_exists.assert_called_once_with("chat-images/123/20231029/uuid.jpg")
 
 
 @pytest.mark.unit

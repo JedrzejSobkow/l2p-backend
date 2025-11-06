@@ -37,31 +37,68 @@ Edit `.env` with your configuration:
 -   `POSTGRES_PASSWORD`: PostgreSQL password (default: postgres)
 -   `POSTGRES_DB`: Database name (default: l2p_db)
 
-### 3. Start Redis
+### 3. Start Services with Docker Compose (Recommended)
 
-Make sure Redis is running. If you have Docker:
+**The easiest way to start all required services (PostgreSQL, Redis, MinIO) is using Docker Compose:**
 
 ```bash
-docker run -d --name redis -p 6379:6379 redis:latest
+# Start all services
+docker-compose up -d
+
+# Check services status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+
+# Stop and remove all data (WARNING: This will delete all data!)
+docker-compose down -v
 ```
 
-### 4. Start PostgreSQL
+**Services will be available at:**
+- PostgreSQL: `localhost:5432`
+- Redis: `localhost:6379`
+- MinIO API: `localhost:9000`
+- MinIO Console: `localhost:9001` (login: minioadmin / minioadmin)
 
-Make sure PostgreSQL is running. If you have Docker:
+**MinIO Configuration:**
 
+The MinIO bucket (`l2p-bucket` by default) is automatically created on startup. You can customize settings in `.env`:
+
+-   `MINIO_ENDPOINT`: MinIO server endpoint (default: localhost:9000)
+-   `MINIO_ACCESS_KEY`: MinIO access key (default: minioadmin)
+-   `MINIO_SECRET_KEY`: MinIO secret key (default: minioadmin)
+-   `MINIO_BUCKET_NAME`: Bucket name (default: l2p-bucket)
+-   `MINIO_SECURE`: Use HTTPS (default: false for local development)
+-   `MINIO_PORT`: API port (default: 9000)
+-   `MINIO_CONSOLE_PORT`: Console UI port (default: 9001)
+
+### 3b. Alternative: Start Services Individually
+
+<details>
+<summary>Click to expand manual Docker commands</summary>
+
+If you prefer to start services individually without Docker Compose:
+
+**Start Redis:**
+```bash
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+```
+
+**Start PostgreSQL:**
 ```bash
 docker run -d --name postgres \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=l2p_db \
   -p 5432:5432 \
-  postgres
+  postgres:16-alpine
 ```
 
-### 5. Start MinIO
-
-MinIO is used for object storage (chat images, files, etc.). Start MinIO using Docker:
-
+**Start MinIO:**
 ```bash
 docker run -d --name minio \
   -p 9000:9000 \
@@ -72,19 +109,17 @@ docker run -d --name minio \
   quay.io/minio/minio server /data --console-address ":9001"
 ```
 
-Access the MinIO Console at `http://localhost:9001` (login: minioadmin / minioadmin)
+**Create MinIO bucket:**
+```bash
+# Install mc (MinIO Client) or use Docker
+docker run --rm --network host minio/mc \
+  alias set local http://localhost:9000 minioadmin minioadmin && \
+  mc mb --ignore-existing local/l2p-bucket
+```
 
-**MinIO Environment Variables:**
+</details>
 
-Add these to your `.env` file:
-
--   `MINIO_ENDPOINT`: MinIO server endpoint (default: localhost:9000)
--   `MINIO_ACCESS_KEY`: MinIO access key (default: minioadmin)
--   `MINIO_SECRET_KEY`: MinIO secret key (default: minioadmin)
--   `MINIO_BUCKET_NAME`: Bucket name (default: l2p-bucket)
--   `MINIO_SECURE`: Use HTTPS (default: False for local development)
-
-### 6. Run Database Migrations
+### 4. Run Database Migrations
 
 Initialize Alembic for database migrations (first time only):
 
