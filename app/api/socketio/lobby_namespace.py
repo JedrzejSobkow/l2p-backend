@@ -13,6 +13,8 @@ from schemas.lobby_schema import (
     TransferHostRequest,
     KickMemberRequest,
     ToggleReadyRequest,
+    SendLobbyMessageRequest,
+    LobbyTypingIndicatorRequest,
     LobbyResponse,
     LobbyCreatedResponse,
     LobbyJoinedResponse,
@@ -27,6 +29,8 @@ from schemas.lobby_schema import (
     LobbyClosedEvent,
     LobbyErrorResponse,
     LobbyMemberResponse,
+    LobbyMessageResponse,
+    LobbyUserTypingResponse,
 )
 from pydantic import ValidationError
 from exceptions.domain_exceptions import (
@@ -750,6 +754,206 @@ class LobbyNamespace(AuthNamespace):
             logger.error(f"Error toggling ready: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to toggle ready status',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+    
+    async def on_send_lobby_message(self, sid, data):
+        """
+        Send a message to lobby chat
+        
+        Expected data: {"lobby_code": str, "content": str}
+        """
+        try:
+            # Validate input
+            try:
+                request = SendLobbyMessageRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_nickname = manager.get_nickname(user_id)
+            user = None
+            if not user_nickname:
+                user = await self.get_authenticated_user(sid)
+                if not user:
+                    error_response = LobbyErrorResponse(
+                        message='User not found',
+                        error_code='USER_NOT_FOUND'
+                    )
+                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                    return
+                user_nickname = user.nickname
+            
+            # Get user pfp_path if not already fetched
+            if not user:
+                user = await self.get_authenticated_user(sid)
+            
+            # Save message
+            redis = get_redis()
+            message = await LobbyService.save_lobby_message(
+                redis=redis,
+                lobby_code=request.lobby_code,
+                user_id=user_id,
+                user_nickname=user_nickname,
+                user_pfp_path=user.pfp_path if user else None,
+                content=request.content
+            )
+            
+            # Broadcast message to all members in lobby
+            message_response = LobbyMessageResponse(
+                user_id=message["user_id"],
+                nickname=message["nickname"],
+                pfp_path=message.get("pfp_path"),
+                content=message["content"],
+                timestamp=message["timestamp"]
+            )
+            await self.emit('lobby_message', message_response.model_dump(mode='json'), room=request.lobby_code)
+            
+            logger.info(f"User {user_id} sent message to lobby {request.lobby_code}")
+            
+        except (NotFoundException, BadRequestException) as e:
+            error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST'
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=error_code,
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+        except Exception as e:
+            logger.error(f"Error sending lobby message: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to send message',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+    
+    async def on_lobby_typing(self, sid, data):
+        """
+        Send typing indicator to lobby chat
+        
+        Expected data: {"lobby_code": str}
+        """
+        try:
+            # Validate input
+            try:
+                request = LobbyTypingIndicatorRequest(**data)
+            except ValidationError as e:
+                # Silently ignore invalid typing events (they're ephemeral)
+                logger.debug(f"Invalid typing indicator data: {e}")
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                return
+            
+            user_nickname = manager.get_nickname(user_id)
+            if not user_nickname:
+                user = await self.get_authenticated_user(sid)
+                if not user:
+                    return
+                user_nickname = user.nickname
+            
+            # Verify user is in this lobby
+            redis = get_redis()
+            user_lobby = await LobbyService.get_user_lobby(redis, user_id)
+            if user_lobby != request.lobby_code:
+                return
+            
+            # Send typing indicator to all other members in lobby
+            typing_response = LobbyUserTypingResponse(
+                user_id=user_id,
+                nickname=user_nickname
+            )
+            await self.emit('lobby_user_typing', typing_response.model_dump(mode='json'), room=request.lobby_code, skip_sid=sid)
+            
+        except Exception as e:
+            logger.error(f"Error in lobby typing: {str(e)}")
+    
+    async def on_get_lobby_messages(self, sid, data):
+        """
+        Get recent messages from lobby chat
+        
+        Expected data: {"lobby_code": str, "limit": int (optional, default 50)}
+        """
+        try:
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            lobby_code = data.get('lobby_code')
+            if not lobby_code:
+                error_response = LobbyErrorResponse(
+                    message='lobby_code is required',
+                    error_code='VALIDATION_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            limit = data.get('limit', 50)
+            
+            # Verify user is in this lobby
+            redis = get_redis()
+            user_lobby = await LobbyService.get_user_lobby(redis, user_id)
+            if user_lobby != lobby_code:
+                error_response = LobbyErrorResponse(
+                    message='You are not a member of this lobby',
+                    error_code='FORBIDDEN'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Get messages
+            messages = await LobbyService.get_lobby_messages(redis, lobby_code, limit)
+            
+            # Convert to response format
+            messages_response = [
+                LobbyMessageResponse(
+                    user_id=msg["user_id"],
+                    nickname=msg["nickname"],
+                    pfp_path=msg.get("pfp_path"),
+                    content=msg["content"],
+                    timestamp=msg["timestamp"]
+                )
+                for msg in messages
+            ]
+            
+            await self.emit('lobby_messages_history', {
+                'messages': [msg.model_dump(mode='json') for msg in messages_response],
+                'lobby_code': lobby_code,
+                'total': len(messages_response)
+            }, room=sid)
+            
+        except NotFoundException as e:
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code='NOT_FOUND',
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+        except Exception as e:
+            logger.error(f"Error getting lobby messages: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to get messages',
                 error_code='INTERNAL_ERROR'
             )
             await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)

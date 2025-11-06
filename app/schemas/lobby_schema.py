@@ -51,6 +51,31 @@ class LeaveLobbyRequest(BaseModel):
     lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
 
 
+class SendLobbyMessageRequest(BaseModel):
+    """Request to send a message in lobby chat"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    content: str = Field(..., min_length=1, max_length=500, description="Message content")
+    
+    @field_validator('lobby_code')
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
+class LobbyTypingIndicatorRequest(BaseModel):
+    """Request to send typing indicator in lobby chat"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    
+    @field_validator('lobby_code')
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
 # ================ Response Models ================
 
 class LobbyMemberResponse(BaseModel):
@@ -166,3 +191,23 @@ class LobbyErrorResponse(BaseModel):
     message: str
     error_code: Optional[str] = None
     details: Optional[dict] = None
+
+
+class LobbyMessageResponse(BaseModel):
+    """Lobby chat message response"""
+    user_id: int
+    nickname: str
+    pfp_path: Optional[str] = None
+    content: str
+    timestamp: datetime
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class LobbyUserTypingResponse(BaseModel):
+    """Event emitted when user is typing in lobby chat"""
+    user_id: int
+    nickname: str

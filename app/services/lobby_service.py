@@ -23,7 +23,9 @@ class LobbyService:
     LOBBY_KEY_PREFIX = "lobby:"
     LOBBY_MEMBERS_KEY_PREFIX = "lobby_members:"
     USER_LOBBY_KEY_PREFIX = "user_lobby:"
+    LOBBY_MESSAGES_KEY_PREFIX = "lobby_messages:"
     LOBBY_TTL = 3600 * 4  # 4 hours TTL for lobbies
+    MAX_CACHED_MESSAGES = 50  # Maximum messages to keep in Redis cache
     
     @staticmethod
     def _generate_lobby_code() -> str:
@@ -44,6 +46,11 @@ class LobbyService:
     def _user_lobby_key(user_id: int) -> str:
         """Get Redis key for user's current lobby"""
         return f"{LobbyService.USER_LOBBY_KEY_PREFIX}{user_id}"
+    
+    @staticmethod
+    def _lobby_messages_key(lobby_code: str) -> str:
+        """Get Redis key for lobby messages list"""
+        return f"{LobbyService.LOBBY_MESSAGES_KEY_PREFIX}{lobby_code}"
     
     @staticmethod
     async def create_lobby(
@@ -765,3 +772,141 @@ class LobbyService:
             "is_ready": new_ready_status,
             "lobby_code": lobby_code
         }
+    
+    @staticmethod
+    async def save_lobby_message(
+        redis: Redis,
+        lobby_code: str,
+        user_id: int,
+        user_nickname: str,
+        user_pfp_path: Optional[str],
+        content: str
+    ) -> Dict[str, Any]:
+        """
+        Save a message to lobby chat (ephemeral - stored in Redis)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            user_id: ID of the message sender
+            user_nickname: Nickname of the sender
+            user_pfp_path: Profile picture path of the sender
+            content: Message content
+            
+        Returns:
+            Dictionary with message details
+            
+        Raises:
+            NotFoundException: If lobby not found
+            BadRequestException: If user not in lobby
+        """
+        # Verify lobby exists
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        if not lobby_data_raw:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Verify user is a member of this lobby
+        members_raw = await redis.zrange(
+            LobbyService._lobby_members_key(lobby_code),
+            0, -1
+        )
+        
+        is_member = False
+        for member_json in members_raw:
+            member = json.loads(member_json)
+            if member["user_id"] == user_id:
+                is_member = True
+                break
+        
+        if not is_member:
+            raise BadRequestException(
+                message="You are not a member of this lobby",
+                details={"user_id": user_id, "lobby_code": lobby_code}
+            )
+        
+        now = datetime.now(UTC)
+        
+        # Create message data
+        message_data = {
+            "user_id": user_id,
+            "nickname": user_nickname,
+            "pfp_path": user_pfp_path,
+            "content": content,
+            "timestamp": now.isoformat()
+        }
+        
+        # Store message in Redis list (FIFO with max size)
+        async with redis.pipeline(transaction=True) as pipe:
+            # Add message to the end of the list
+            pipe.rpush(
+                LobbyService._lobby_messages_key(lobby_code),
+                json.dumps(message_data)
+            )
+            
+            # Trim list to keep only last N messages
+            pipe.ltrim(
+                LobbyService._lobby_messages_key(lobby_code),
+                -LobbyService.MAX_CACHED_MESSAGES,
+                -1
+            )
+            
+            # Set TTL on messages list
+            pipe.expire(
+                LobbyService._lobby_messages_key(lobby_code),
+                LobbyService.LOBBY_TTL
+            )
+            
+            await pipe.execute()
+        
+        logger.info(f"User {user_id} sent message to lobby {lobby_code}")
+        
+        return {
+            **message_data,
+            "timestamp": now
+        }
+    
+    @staticmethod
+    async def get_lobby_messages(
+        redis: Redis,
+        lobby_code: str,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent messages from lobby chat
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            limit: Maximum number of messages to retrieve (default 50)
+            
+        Returns:
+            List of message dictionaries
+            
+        Raises:
+            NotFoundException: If lobby not found
+        """
+        # Verify lobby exists
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        if not lobby_data_raw:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Get messages (most recent first)
+        messages_raw = await redis.lrange(
+            LobbyService._lobby_messages_key(lobby_code),
+            -limit,
+            -1
+        )
+        
+        messages = []
+        for msg_json in messages_raw:
+            msg = json.loads(msg_json)
+            msg["timestamp"] = datetime.fromisoformat(msg["timestamp"])
+            messages.append(msg)
+        
+        return messages

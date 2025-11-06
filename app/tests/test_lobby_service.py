@@ -1272,3 +1272,230 @@ class TestLobbyService:
         assert user1_lobby is None
         assert user2_lobby is None
         assert user3_lobby is None
+    
+    # ================ Lobby Chat Tests ================
+    
+    async def test_save_lobby_message_success(self, redis_client):
+        """Test saving a message to lobby chat"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path="/avatars/host.jpg",
+            max_players=4
+        )
+        
+        # Save message
+        message = await LobbyService.save_lobby_message(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            user_nickname="Host",
+            user_pfp_path="/avatars/host.jpg",
+            content="Hello everyone!"
+        )
+        
+        assert message is not None
+        assert message["user_id"] == 1
+        assert message["nickname"] == "Host"
+        assert message["pfp_path"] == "/avatars/host.jpg"
+        assert message["content"] == "Hello everyone!"
+        assert "timestamp" in message
+    
+    async def test_save_lobby_message_not_found(self, redis_client):
+        """Test saving message to non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.save_lobby_message(
+                redis=redis_client,
+                lobby_code="INVALID",
+                user_id=1,
+                user_nickname="User",
+                user_pfp_path=None,
+                content="Test message"
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_save_lobby_message_not_member(self, redis_client):
+        """Test saving message when user is not a lobby member"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to send message as non-member
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.save_lobby_message(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=999,
+                user_nickname="NonMember",
+                user_pfp_path=None,
+                content="I'm not a member!"
+            )
+        assert "not a member" in str(exc.value.message)
+    
+    async def test_get_lobby_messages_success(self, redis_client):
+        """Test getting messages from lobby chat"""
+        # Create lobby with two users
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        # Send multiple messages
+        await LobbyService.save_lobby_message(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            user_nickname="Host",
+            user_pfp_path=None,
+            content="Hello!"
+        )
+        
+        await LobbyService.save_lobby_message(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None,
+            content="Hi there!"
+        )
+        
+        await LobbyService.save_lobby_message(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            user_nickname="Host",
+            user_pfp_path=None,
+            content="How are you?"
+        )
+        
+        # Get messages
+        messages = await LobbyService.get_lobby_messages(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            limit=50
+        )
+        
+        assert len(messages) == 3
+        assert messages[0]["content"] == "Hello!"
+        assert messages[0]["user_id"] == 1
+        assert messages[1]["content"] == "Hi there!"
+        assert messages[1]["user_id"] == 2
+        assert messages[2]["content"] == "How are you?"
+        assert messages[2]["user_id"] == 1
+    
+    async def test_get_lobby_messages_with_limit(self, redis_client):
+        """Test getting limited number of messages"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Send 10 messages
+        for i in range(10):
+            await LobbyService.save_lobby_message(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                user_nickname="Host",
+                user_pfp_path=None,
+                content=f"Message {i+1}"
+            )
+        
+        # Get only last 5 messages
+        messages = await LobbyService.get_lobby_messages(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            limit=5
+        )
+        
+        assert len(messages) == 5
+        assert messages[0]["content"] == "Message 6"
+        assert messages[4]["content"] == "Message 10"
+    
+    async def test_get_lobby_messages_not_found(self, redis_client):
+        """Test getting messages from non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.get_lobby_messages(
+                redis=redis_client,
+                lobby_code="INVALID",
+                limit=50
+            )
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_lobby_messages_cache_max_size(self, redis_client):
+        """Test that lobby messages cache respects max size"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Send more messages than MAX_CACHED_MESSAGES
+        num_messages = LobbyService.MAX_CACHED_MESSAGES + 10
+        for i in range(num_messages):
+            await LobbyService.save_lobby_message(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                user_nickname="Host",
+                user_pfp_path=None,
+                content=f"Message {i+1}"
+            )
+        
+        # Get all cached messages
+        messages = await LobbyService.get_lobby_messages(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            limit=1000  # Request more than cache size
+        )
+        
+        # Should only get MAX_CACHED_MESSAGES
+        assert len(messages) == LobbyService.MAX_CACHED_MESSAGES
+        # Should get the most recent messages
+        assert messages[0]["content"] == f"Message {num_messages - LobbyService.MAX_CACHED_MESSAGES + 1}"
+        assert messages[-1]["content"] == f"Message {num_messages}"
+    
+    async def test_lobby_messages_empty(self, redis_client):
+        """Test getting messages from lobby with no messages"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Get messages (should be empty)
+        messages = await LobbyService.get_lobby_messages(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            limit=50
+        )
+        
+        assert len(messages) == 0
