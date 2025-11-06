@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, status
-from api.routes import default, auth, avatars, friendship, chat
+from api.routes import auth, avatars, friendship, chat, lobby
 from api.exception_handlers import register_exception_handlers
 from infrastructure.redis_connection import redis_connection
 from infrastructure.postgres_connection import postgres_connection
@@ -74,15 +74,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(default.router, prefix="/v1")
 app.include_router(auth.auth_router, prefix="/v1")
 app.include_router(auth.users_router, prefix="/v1")
 app.include_router(avatars.avatar_router, prefix="/v1")
 app.include_router(friendship.friendship_router, prefix="/v1")
 app.include_router(chat.router, prefix="/v1")
-
-# Import lobby router
-from api.routes import lobby
 app.include_router(lobby.router, prefix="/v1")
 
 # Import Socket.IO instance and register all namespaces
