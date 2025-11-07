@@ -73,7 +73,9 @@ class GameNamespace(AuthNamespace):
         Create a new game for the user's lobby.
         
         Event: create_game
-        Data: {game_name: str, rules?: dict}
+        Data: {} (no parameters - uses game selected in lobby)
+        
+        DEPRECATED: Data: {game_name: str, rules?: dict} (still supported for backwards compatibility)
         """
         redis = get_redis()
         
@@ -96,9 +98,6 @@ class GameNamespace(AuthNamespace):
                 )
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
-            
-            # Validate request
-            request = CreateGameRequest(**data)
             
             # Get user's lobby
             user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
@@ -125,6 +124,31 @@ class GameNamespace(AuthNamespace):
                     details={"lobby_code": lobby_code, "host_id": lobby["host_id"]}
                 )
             
+            # Determine game_name and rules
+            # Priority: 1. Lobby selection, 2. Request data (backwards compatibility)
+            game_name = lobby.get("selected_game")
+            rules = lobby.get("game_rules", {})
+            
+            # Backwards compatibility: allow overriding with request data
+            if data:
+                try:
+                    request = CreateGameRequest(**data)
+                    if request.game_name:
+                        game_name = request.game_name
+                        logger.warning(f"Using game_name from request (deprecated). Use lobby game selection instead.")
+                    if request.rules:
+                        rules = request.rules
+                        logger.warning(f"Using rules from request (deprecated). Use lobby game rules instead.")
+                except ValidationError:
+                    pass  # Ignore validation errors if data is empty
+            
+            # Validate that a game is selected
+            if not game_name:
+                raise BadRequestException(
+                    message="No game selected. Please select a game in the lobby first.",
+                    details={"lobby_code": lobby_code}
+                )
+            
             # Get player IDs from lobby members
             player_ids = [member["user_id"] for member in lobby["members"]]
             
@@ -132,9 +156,9 @@ class GameNamespace(AuthNamespace):
             game_result = await GameService.create_game(
                 redis=redis,
                 lobby_code=lobby_code,
-                game_name=request.game_name,
+                game_name=game_name,
                 player_ids=player_ids,
-                rules=request.rules
+                rules=rules
             )
             
             # Join the creator to the game room
@@ -156,7 +180,7 @@ class GameNamespace(AuthNamespace):
             # Also broadcast to the room (in case other players are already connected)
             await self.emit("game_started", event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"Game '{request.game_name}' created for lobby {lobby_code}")
+            logger.info(f"Game '{game_name}' created for lobby {lobby_code}")
             
         except ValidationError as e:
             error_response = GameErrorResponse(
