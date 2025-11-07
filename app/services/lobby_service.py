@@ -58,8 +58,11 @@ class LobbyService:
         host_id: int,
         host_nickname: str,
         host_pfp_path: Optional[str] = None,
+        name: Optional[str] = None,
         max_players: int = 6,
-        is_public: bool = False
+        is_public: bool = False,
+        game_name: Optional[str] = None,
+        game_rules: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Create a new lobby
@@ -68,7 +71,16 @@ class LobbyService:
             redis: Redis client
             host_id: User ID of the host
             host_nickname: Nickname of the host
+            host_pfp_path: Path to host's profile picture
+            name: Optional custom lobby name (defaults to "Game: {lobby_code}")
             max_players: Maximum number of players (2-6)
+            host_id: User ID of the host
+            host_nickname: Nickname of the host
+            host_pfp_path: Path to host's profile picture
+            max_players: Maximum number of players (2-6)
+            is_public: Whether lobby is public
+            game_name: Optional pre-selected game
+            game_rules: Optional initial game rules
             
         Returns:
             Dictionary with lobby_code and lobby details
@@ -82,6 +94,27 @@ class LobbyService:
                 message="Invalid max_players",
                 details={"max_players": "Must be between 2 and 6"}
             )
+        
+        # Validate game_name if provided
+        if game_name:
+            from services.game_service import GameService
+            if game_name not in GameService.GAME_ENGINES:
+                raise BadRequestException(
+                    message=f"Unknown game type: {game_name}",
+                    details={
+                        "available_games": GameService.get_available_games(),
+                        "requested_game": game_name
+                    }
+                )
+            
+            # If game_name provided without rules, use defaults
+            if game_rules is None:
+                engine_class = GameService.GAME_ENGINES[game_name]
+                game_info = engine_class.get_game_info()
+                game_rules = {
+                    rule_name: rule_config.default
+                    for rule_name, rule_config in game_info.supported_rules.items()
+                }
         
         # Check if user is already in a lobby
         existing_lobby = await redis.get(LobbyService._user_lobby_key(host_id))
@@ -105,13 +138,19 @@ class LobbyService:
         
         now = datetime.now(UTC)
         
+        # Set lobby name - use provided name or default to "Game: {lobby_code}"
+        lobby_name = name if name else f"Game: {lobby_code}"
+        
         # Create lobby data
         lobby_data = {
             "lobby_code": lobby_code,
+            "name": lobby_name,
             "host_id": host_id,
             "max_players": max_players,
             "is_public": is_public,
             "created_at": now.isoformat(),
+            "selected_game": game_name,
+            "game_rules": game_rules or {},
         }
         
         # Create host member data
@@ -149,16 +188,20 @@ class LobbyService:
             
             await pipe.execute()
         
-        logger.info(f"Lobby {lobby_code} created by user {host_id}")
+        logger.info(f"Lobby '{lobby_name}' ({lobby_code}) created by user {host_id}" + 
+                   (f" with game {game_name}" if game_name else ""))
         
         return {
             "lobby_code": lobby_code,
+            "name": lobby_name,
             "host_id": host_id,
             "max_players": max_players,
             "is_public": is_public,
             "current_players": 1,
             "members": [host_member],
             "created_at": now,
+            "selected_game": game_name,
+            "game_rules": game_rules or {},
         }
     
     @staticmethod
@@ -910,3 +953,256 @@ class LobbyService:
             messages.append(msg)
         
         return messages
+
+    @staticmethod
+    async def select_game(
+        redis: Redis,
+        lobby_code: str,
+        host_id: int,
+        game_name: str
+    ) -> Dict[str, Any]:
+        """
+        Select a game for the lobby (host only)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            host_id: User ID of the host (for authorization)
+            game_name: Name of the game to select
+            
+        Returns:
+            Dictionary with updated lobby info and game info
+            
+        Raises:
+            NotFoundException: If lobby not found
+            ForbiddenException: If user is not the host
+            BadRequestException: If game name is invalid
+        """
+        # Get lobby
+        lobby = await LobbyService.get_lobby(redis, lobby_code)
+        if not lobby:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Check if user is host
+        if lobby["host_id"] != host_id:
+            raise ForbiddenException(
+                message="Only the host can select a game",
+                details={"host_id": lobby["host_id"]}
+            )
+        
+        # Validate game name
+        from services.game_service import GameService
+        if game_name not in GameService.GAME_ENGINES:
+            raise BadRequestException(
+                message=f"Unknown game type: {game_name}",
+                details={
+                    "available_games": GameService.get_available_games(),
+                    "requested_game": game_name
+                }
+            )
+        
+        # Get game info and default rules
+        engine_class = GameService.GAME_ENGINES[game_name]
+        game_info = engine_class.get_game_info()
+        default_rules = {
+            rule_name: rule_config.default
+            for rule_name, rule_config in game_info.supported_rules.items()
+        }
+        
+        # Update lobby data
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        lobby_data = json.loads(lobby_data_raw)
+        lobby_data["selected_game"] = game_name
+        lobby_data["game_rules"] = default_rules
+        
+        # Save to Redis
+        await redis.set(
+            LobbyService._lobby_key(lobby_code),
+            json.dumps(lobby_data),
+            ex=LobbyService.LOBBY_TTL
+        )
+        
+        logger.info(f"Game '{game_name}' selected for lobby {lobby_code}")
+        
+        return {
+            "lobby": lobby_data,
+            "game_info": game_info.model_dump(),
+            "current_rules": default_rules
+        }
+
+    @staticmethod
+    async def update_game_rules(
+        redis: Redis,
+        lobby_code: str,
+        host_id: int,
+        rules: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update game rules in the lobby (host only)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            host_id: User ID of the host (for authorization)
+            rules: Dictionary of rules to update
+            
+        Returns:
+            Dictionary with updated rules
+            
+        Raises:
+            NotFoundException: If lobby not found
+            ForbiddenException: If user is not the host
+            BadRequestException: If no game selected or invalid rules
+        """
+        # Get lobby
+        lobby = await LobbyService.get_lobby(redis, lobby_code)
+        if not lobby:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Check if user is host
+        if lobby["host_id"] != host_id:
+            raise ForbiddenException(
+                message="Only the host can update game rules",
+                details={"host_id": lobby["host_id"]}
+            )
+        
+        # Check if game is selected
+        if not lobby.get("selected_game"):
+            raise BadRequestException(
+                message="No game selected. Select a game first.",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Validate rules against game info
+        from services.game_service import GameService
+        engine_class = GameService.GAME_ENGINES[lobby["selected_game"]]
+        game_info = engine_class.get_game_info()
+        
+        for rule_name, rule_value in rules.items():
+            if rule_name not in game_info.supported_rules:
+                raise BadRequestException(
+                    message=f"Unknown rule: {rule_name}",
+                    details={
+                        "supported_rules": list(game_info.supported_rules.keys()),
+                        "invalid_rule": rule_name
+                    }
+                )
+            
+            rule_config = game_info.supported_rules[rule_name]
+            
+            # Validate based on rule type
+            if rule_config.type == "integer":
+                if not isinstance(rule_value, int):
+                    raise BadRequestException(
+                        message=f"Rule '{rule_name}' must be an integer",
+                        details={"rule_name": rule_name, "provided_value": rule_value}
+                    )
+                if rule_config.min is not None and rule_value < rule_config.min:
+                    raise BadRequestException(
+                        message=f"Rule '{rule_name}' is below minimum",
+                        details={"rule_name": rule_name, "min": rule_config.min, "value": rule_value}
+                    )
+                if rule_config.max is not None and rule_value > rule_config.max:
+                    raise BadRequestException(
+                        message=f"Rule '{rule_name}' exceeds maximum",
+                        details={"rule_name": rule_name, "max": rule_config.max, "value": rule_value}
+                    )
+            
+            elif rule_config.type == "boolean":
+                if not isinstance(rule_value, bool):
+                    raise BadRequestException(
+                        message=f"Rule '{rule_name}' must be a boolean",
+                        details={"rule_name": rule_name, "provided_value": rule_value}
+                    )
+            
+            elif rule_config.type == "string":
+                if not isinstance(rule_value, str):
+                    raise BadRequestException(
+                        message=f"Rule '{rule_name}' must be a string",
+                        details={"rule_name": rule_name, "provided_value": rule_value}
+                    )
+        
+        # Update lobby data
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        lobby_data = json.loads(lobby_data_raw)
+        
+        # Merge new rules with existing rules
+        current_rules = lobby_data.get("game_rules", {})
+        current_rules.update(rules)
+        lobby_data["game_rules"] = current_rules
+        
+        # Save to Redis
+        await redis.set(
+            LobbyService._lobby_key(lobby_code),
+            json.dumps(lobby_data),
+            ex=LobbyService.LOBBY_TTL
+        )
+        
+        logger.info(f"Game rules updated for lobby {lobby_code}: {rules}")
+        
+        return {
+            "lobby_code": lobby_code,
+            "rules": current_rules
+        }
+
+    @staticmethod
+    async def clear_game_selection(
+        redis: Redis,
+        lobby_code: str,
+        host_id: int
+    ) -> Dict[str, Any]:
+        """
+        Clear game selection (allows selecting a different game)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            host_id: User ID of the host (for authorization)
+            
+        Returns:
+            Dictionary with updated lobby info
+            
+        Raises:
+            NotFoundException: If lobby not found
+            ForbiddenException: If user is not the host
+        """
+        # Get lobby
+        lobby = await LobbyService.get_lobby(redis, lobby_code)
+        if not lobby:
+            raise NotFoundException(
+                message="Lobby not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        # Check if user is host
+        if lobby["host_id"] != host_id:
+            raise ForbiddenException(
+                message="Only the host can clear game selection",
+                details={"host_id": lobby["host_id"]}
+            )
+        
+        # Update lobby data
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        lobby_data = json.loads(lobby_data_raw)
+        lobby_data["selected_game"] = None
+        lobby_data["game_rules"] = {}
+        
+        # Save to Redis
+        await redis.set(
+            LobbyService._lobby_key(lobby_code),
+            json.dumps(lobby_data),
+            ex=LobbyService.LOBBY_TTL
+        )
+        
+        logger.info(f"Game selection cleared for lobby {lobby_code}")
+        
+        return {
+            "lobby_code": lobby_code,
+            "message": "Game selection cleared"
+        }

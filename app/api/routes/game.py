@@ -1,30 +1,67 @@
 # app/api/routes/game.py
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from services.game_service import GameService
-from schemas.game_schema import AvailableGamesResponse
+from schemas.game_schema import AvailableGamesResponse, GameInfo
 
 router = APIRouter(prefix="/game", tags=["game"])
 
 
-@router.get("/available", response_model=AvailableGamesResponse)
-async def get_available_games():
+@router.get("/available")
+async def get_available_games(full_info: bool = False):
     """
     Get list of available game types.
+    
+    Args:
+        full_info: If True, returns full GameInfo for each game. If False, returns just names.
     
     Returns a list of all game engines that have been registered
     and are available to play.
     
-    Example response:
+    Example response (full_info=False):
     ```json
     {
         "games": ["tictactoe"]
     }
     ```
+    
+    Example response (full_info=True):
+    ```json
+    {
+        "games": [
+            {
+                "game_name": "tictactoe",
+                "display_name": "Tic-Tac-Toe",
+                "description": "...",
+                "min_players": 2,
+                "max_players": 2,
+                "supported_rules": {...},
+                ...
+            }
+        ]
+    }
+    ```
     """
-    games = GameService.get_available_games()
-    return AvailableGamesResponse(games=games)
+    if not full_info:
+        games = GameService.get_available_games()
+        return AvailableGamesResponse(games=games)
+    
+    # Return full game info
+    games_info = []
+    for game_name in GameService.get_available_games():
+        engine_class = GameService.GAME_ENGINES[game_name]
+        try:
+            game_info = engine_class.get_game_info()
+            games_info.append(game_info)
+        except Exception as e:
+            # Skip games that can't provide info
+            continue
+    
+    return {
+        "games": [info.model_dump() for info in games_info],
+        "total": len(games_info)
+    }
 
 
 @router.get("/info/{game_name}")
