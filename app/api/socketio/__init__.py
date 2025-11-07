@@ -6,6 +6,7 @@ Socket.IO namespaces for real-time features
 Active namespaces:
 - /chat: Real-time chat messaging
 - /lobby: Game lobby management
+- /game: Turn-based game engine
 
 To add a new namespace:
 1. Create a new file: <feature>_namespace.py
@@ -22,6 +23,7 @@ from infrastructure.socketio_manager import sio, manager
 # Import namespaces to register them
 from .chat_namespace import ChatNamespace
 from .lobby_namespace import LobbyNamespace
+from .game_namespace import GameNamespace
 
 
-__all__ = ['sio', 'manager', 'ChatNamespace', 'LobbyNamespace']
+__all__ = ['sio', 'manager', 'ChatNamespace', 'LobbyNamespace', 'GameNamespace']

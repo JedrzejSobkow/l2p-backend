@@ -9,6 +9,7 @@ from infrastructure.redis_connection import redis_connection
 from infrastructure.postgres_connection import postgres_connection
 from infrastructure.minio_connection import minio_connection
 import socketio
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,24 @@ async def lifespan(app: FastAPI):
     await postgres_connection.connect()
     
     minio_connection.connect()
+    
+    # Start timeout checker background task (Redis keyspace notification listener)
+    from services.timeout_checker import TimeoutChecker
+    from api.socketio import sio
+    
+    timeout_checker = TimeoutChecker(redis_connection.get_client(), sio)
+    timeout_checker_task = asyncio.create_task(timeout_checker.start())
+    logger.info("Timeout checker started (listening for Redis key expirations)")
 
     yield
     
-    # Shutdown: Close connections
+    # Shutdown: Stop background tasks and close connections
+    timeout_checker.stop()
+    try:
+        await asyncio.wait_for(timeout_checker_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout checker task did not stop gracefully")
+    
     await postgres_connection.disconnect()
     await redis_connection.disconnect()
     minio_connection.disconnect()
@@ -80,6 +95,10 @@ app.include_router(avatars.avatar_router, prefix="/v1")
 app.include_router(friendship.friendship_router, prefix="/v1")
 app.include_router(chat.router, prefix="/v1")
 app.include_router(lobby.router, prefix="/v1")
+
+# Import game router
+from api.routes import game
+app.include_router(game.router, prefix="/v1")
 
 # Import Socket.IO instance and register all namespaces
 from api.socketio import sio
