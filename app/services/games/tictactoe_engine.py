@@ -32,15 +32,11 @@ class TicTacToeEngine(GameEngineInterface):
         if len(player_ids) != 2:
             raise ValueError("Tic-tac-toe requires exactly 2 players")
         
-        # Parse custom rules
+        # Parse custom rules (validation already done by parent class)
         self.board_size = self.rules.get("board_size", 3)
         self.win_length = self.rules.get("win_length", 3)
         
-        # Validate board size
-        if not 3 <= self.board_size <= 5:
-            raise ValueError("Board size must be between 3 and 5")
-        
-        # Validate win length
+        # Additional game-specific validation
         if self.win_length > self.board_size:
             raise ValueError("Win length cannot exceed board size")
         
@@ -200,27 +196,25 @@ class TicTacToeEngine(GameEngineInterface):
             supported_rules={
                 "board_size": GameRuleOption(
                     type="integer",
-                    min=3,
-                    max=5,
+                    allowed_values=[3, 4, 5],
                     default=3,
                     description="Size of the game board (NxN)"
                 ),
                 "win_length": GameRuleOption(
                     type="integer",
-                    min=3,
-                    max=5,
+                    allowed_values=[3, 4, 5],
                     default=3,
                     description="Number of symbols in a row needed to win"
                 ),
                 "timeout_type": GameRuleOption(
                     type="string",
+                    allowed_values=["none", "total_time", "per_turn"],
                     default="none",
                     description="Type of timeout: 'none' (no timeout), 'total_time' (total time per player), or 'per_turn' (time limit per turn)"
                 ),
                 "timeout_seconds": GameRuleOption(
                     type="integer",
-                    min=10,
-                    max=3600,
+                    allowed_values=[10, 15, 30, 60, 120, 300, 600],
                     default=300,
                     description="Timeout duration in seconds (e.g., 300 for 5 minutes). Only applies when timeout_type is not 'none'"
                 )

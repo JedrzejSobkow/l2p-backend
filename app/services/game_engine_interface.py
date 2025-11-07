@@ -67,6 +67,9 @@ class GameEngineInterface(ABC):
         self.game_result = GameResult.IN_PROGRESS
         self.winner_id: Optional[int] = None
         
+        # Validate custom rules against game info
+        self._validate_rules()
+        
         # Timeout configuration
         timeout_type_str = self.rules.get("timeout_type", "none")
         self.timeout_type = TimeoutType(timeout_type_str) if timeout_type_str else TimeoutType.NONE
@@ -79,6 +82,40 @@ class GameEngineInterface(ABC):
         # Validate timeout configuration
         if self.timeout_type != TimeoutType.NONE and self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive when timeout is enabled")
+    
+    def _validate_rules(self):
+        """
+        Validate custom rules against the game's supported rules.
+        This uses the GameRuleOption definitions from get_game_info().
+        Only validates rules that are explicitly provided by the user.
+        """
+        game_info = self.get_game_info()
+        
+        for rule_name, rule_value in self.rules.items():
+            # Skip validation for rules not defined in game info
+            if rule_name not in game_info.supported_rules:
+                continue
+            
+            rule_option = game_info.supported_rules[rule_name]
+            
+            # Type validation
+            if rule_option.type == "integer":
+                if not isinstance(rule_value, int) or isinstance(rule_value, bool):
+                    raise ValueError(f"{rule_name} must be an integer, got {type(rule_value).__name__}")
+            elif rule_option.type == "float" or rule_option.type == "number":
+                if not isinstance(rule_value, (int, float)) or isinstance(rule_value, bool):
+                    raise ValueError(f"{rule_name} must be a number, got {type(rule_value).__name__}")
+            elif rule_option.type == "boolean":
+                if not isinstance(rule_value, bool):
+                    raise ValueError(f"{rule_name} must be a boolean, got {type(rule_value).__name__}")
+            elif rule_option.type == "string":
+                if not isinstance(rule_value, str):
+                    raise ValueError(f"{rule_name} must be a string, got {type(rule_value).__name__}")
+            
+            # Allowed values validation
+            if rule_option.allowed_values is not None:
+                if rule_value not in rule_option.allowed_values:
+                    raise ValueError(f"{rule_name} value '{rule_value}' is not in allowed values: {rule_option.allowed_values}")
     
     @property
     def current_player_id(self) -> int:

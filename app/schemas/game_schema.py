@@ -1,6 +1,6 @@
 # app/schemas/game_schema.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
@@ -9,11 +9,9 @@ from datetime import datetime
 class GameRuleOption(BaseModel):
     """Schema for a configurable game rule option"""
     type: str = Field(..., description="Data type of the rule (e.g., 'integer', 'boolean', 'string')")
-    min: Optional[Union[int, float]] = Field(None, description="Minimum value for numeric rules")
-    max: Optional[Union[int, float]] = Field(None, description="Maximum value for numeric rules")
+    allowed_values: Optional[List[Any]] = Field(None, description="List of allowed values")
     default: Any = Field(..., description="Default value for the rule")
     description: str = Field(..., description="Human-readable description of the rule")
-
 
 class GameInfo(BaseModel):
     """Static information about a game type"""
