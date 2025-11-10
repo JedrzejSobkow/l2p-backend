@@ -81,6 +81,7 @@ async def get_public_lobbies(
         lobbies_response = [
             LobbyResponse(
                 lobby_code=lobby["lobby_code"],
+                name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
@@ -110,7 +111,7 @@ async def get_lobby(
     current_user: RegisteredUser = Depends(current_active_user)
 ):
     """
-    Get lobby information by code
+    Get lobby details
     
     - **lobby_code**: 6-character lobby code
     """
@@ -126,6 +127,7 @@ async def get_lobby(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
@@ -166,6 +168,7 @@ async def join_lobby(
         
         lobby_response = LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
@@ -242,7 +245,9 @@ async def update_lobby_settings(
     Update lobby settings (host only)
     
     - **lobby_code**: 6-character lobby code
+    - **name**: New lobby name (must be unique)
     - **max_players**: New maximum number of players (2-6)
+    - **is_public**: Whether the lobby is public or private
     """
     try:
         redis = get_redis()
@@ -250,12 +255,14 @@ async def update_lobby_settings(
             redis=redis,
             lobby_code=lobby_code.upper(),
             user_id=current_user.id,
+            name=request.name,
             max_players=request.max_players,
             is_public=request.is_public
         )
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
@@ -313,6 +320,7 @@ async def transfer_host(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
@@ -417,6 +425,7 @@ async def get_my_lobby(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],

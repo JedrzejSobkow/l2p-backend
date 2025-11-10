@@ -30,6 +30,7 @@ class JoinLobbyRequest(BaseModel):
 
 class UpdateLobbySettingsRequest(BaseModel):
     """Request to update lobby settings (only host can do this)"""
+    name: Optional[str] = Field(None, min_length=1, max_length=50, description="New lobby name (must be unique)")
     max_players: Optional[int] = Field(None, ge=2, le=6, description="Maximum number of players (2-6)")
     is_public: Optional[bool] = Field(None, description="Whether the lobby is public or private")
 
@@ -197,6 +198,7 @@ class LobbyHostTransferredEvent(BaseModel):
 
 class LobbySettingsUpdatedEvent(BaseModel):
     """Event emitted when lobby settings are updated"""
+    name: Optional[str] = None
     max_players: Optional[int] = None
     is_public: Optional[bool] = None
     message: str = "Lobby settings updated"

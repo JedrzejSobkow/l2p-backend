@@ -431,12 +431,14 @@ class LobbyNamespace(AuthNamespace):
                 redis=redis,
                 lobby_code=lobby_code,
                 user_id=user_id,
+                name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
             )
             
             # Notify all members
             settings_updated_event = LobbySettingsUpdatedEvent(
+                name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
             )
@@ -618,6 +620,7 @@ class LobbyNamespace(AuthNamespace):
             lobbies_response = [
                 LobbyResponse(
                     lobby_code=lobby["lobby_code"],
+                    name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                     host_id=lobby["host_id"],
                     max_players=lobby["max_players"],
                     current_players=lobby["current_players"],

@@ -24,6 +24,8 @@ class LobbyService:
     LOBBY_MEMBERS_KEY_PREFIX = "lobby_members:"
     USER_LOBBY_KEY_PREFIX = "user_lobby:"
     LOBBY_MESSAGES_KEY_PREFIX = "lobby_messages:"
+    LOBBY_NAMES_SET = "lobby_names"  # Set to track unique lobby names
+    LOBBY_NAME_TO_CODE_PREFIX = "lobby_name_to_code:"  # Map lobby name to code
     LOBBY_TTL = 3600 * 4  # 4 hours TTL for lobbies
     MAX_CACHED_MESSAGES = 50  # Maximum messages to keep in Redis cache
     
@@ -51,6 +53,11 @@ class LobbyService:
     def _lobby_messages_key(lobby_code: str) -> str:
         """Get Redis key for lobby messages list"""
         return f"{LobbyService.LOBBY_MESSAGES_KEY_PREFIX}{lobby_code}"
+    
+    @staticmethod
+    def _lobby_name_to_code_key(lobby_name: str) -> str:
+        """Get Redis key for mapping lobby name to code"""
+        return f"{LobbyService.LOBBY_NAME_TO_CODE_PREFIX}{lobby_name.lower()}"
     
     @staticmethod
     async def create_lobby(
@@ -169,6 +176,13 @@ class LobbyService:
             pipe.set(
                 LobbyService._lobby_key(lobby_code),
                 json.dumps(lobby_data),
+                ex=LobbyService.LOBBY_TTL
+            )
+            
+            # Store lobby name mapping for uniqueness check
+            pipe.set(
+                LobbyService._lobby_name_to_code_key(lobby_name),
+                lobby_code,
                 ex=LobbyService.LOBBY_TTL
             )
             
@@ -415,10 +429,136 @@ class LobbyService:
         return {"host_transferred": False}
     
     @staticmethod
+    async def is_lobby_name_available(
+        redis: Redis,
+        name: str,
+        exclude_lobby_code: Optional[str] = None
+    ) -> bool:
+        """
+        Check if a lobby name is available
+        
+        Args:
+            redis: Redis client
+            name: Name to check
+            exclude_lobby_code: Optional lobby code to exclude from check (for renaming current lobby)
+            
+        Returns:
+            True if name is available, False otherwise
+        """
+        # Check if name already exists
+        existing_code = await redis.get(LobbyService._lobby_name_to_code_key(name))
+        
+        if not existing_code:
+            return True
+        
+        # If excluding a lobby code (renaming), check if it's the same lobby
+        if exclude_lobby_code:
+            existing_code_str = existing_code.decode() if isinstance(existing_code, bytes) else existing_code
+            return existing_code_str == exclude_lobby_code
+        
+        return False
+    
+    @staticmethod
+    async def update_lobby_name(
+        redis: Redis,
+        lobby_code: str,
+        user_id: int,
+        new_name: str
+    ) -> Dict[str, Any]:
+        """
+        Update lobby name (only host can do this)
+        
+        Args:
+            redis: Redis client
+            lobby_code: 6-character lobby code
+            user_id: User ID requesting update
+            new_name: New lobby name
+            
+        Returns:
+            Updated lobby details
+            
+        Raises:
+            NotFoundException: If lobby not found
+            ForbiddenException: If user is not host
+            BadRequestException: If name is already taken or invalid
+        """
+        # Validate name
+        if not new_name or len(new_name.strip()) == 0:
+            raise BadRequestException(
+                message="Lobby name cannot be empty",
+                details={"name": "Name is required"}
+            )
+        
+        if len(new_name) > 50:
+            raise BadRequestException(
+                message="Lobby name too long",
+                details={"name": "Name must be at most 50 characters"}
+            )
+        
+        new_name = new_name.strip()
+        
+        # Get lobby
+        lobby = await LobbyService.get_lobby(redis, lobby_code)
+        if not lobby:
+            raise NotFoundException(message="Lobby not found")
+        
+        # Check if user is host
+        if lobby["host_id"] != user_id:
+            raise ForbiddenException(message="Only the host can change the lobby name")
+        
+        # Check if name is the same
+        if lobby.get("name") == new_name:
+            return lobby
+        
+        # Check if name is available
+        is_available = await LobbyService.is_lobby_name_available(
+            redis, new_name, exclude_lobby_code=lobby_code
+        )
+        
+        if not is_available:
+            raise BadRequestException(
+                message="Lobby name is already taken",
+                details={"name": "This name is already in use by another lobby"}
+            )
+        
+        old_name = lobby.get("name")
+        
+        # Update lobby data and name mapping
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        lobby_data = json.loads(lobby_data_raw)
+        lobby_data["name"] = new_name
+        
+        async with redis.pipeline(transaction=True) as pipe:
+            # Update lobby data
+            pipe.set(
+                LobbyService._lobby_key(lobby_code),
+                json.dumps(lobby_data),
+                ex=LobbyService.LOBBY_TTL
+            )
+            
+            # Remove old name mapping
+            if old_name:
+                pipe.delete(LobbyService._lobby_name_to_code_key(old_name))
+            
+            # Add new name mapping
+            pipe.set(
+                LobbyService._lobby_name_to_code_key(new_name),
+                lobby_code,
+                ex=LobbyService.LOBBY_TTL
+            )
+            
+            await pipe.execute()
+        
+        logger.info(f"Lobby {lobby_code} name updated from '{old_name}' to '{new_name}' by host {user_id}")
+        
+        return await LobbyService.get_lobby(redis, lobby_code)
+    
+    @staticmethod
     async def update_lobby_settings(
         redis: Redis,
         lobby_code: str,
         user_id: int,
+        name: Optional[str] = None,
         max_players: Optional[int] = None,
         is_public: Optional[bool] = None
     ) -> Dict[str, Any]:
@@ -429,6 +569,7 @@ class LobbyService:
             redis: Redis client
             lobby_code: 6-character lobby code
             user_id: User ID requesting update
+            name: New lobby name (optional)
             max_players: New max players value (optional)
             is_public: New public/private setting (optional)
             
@@ -441,10 +582,10 @@ class LobbyService:
             BadRequestException: If invalid max_players or below current player count
         """
         # At least one setting must be provided
-        if max_players is None and is_public is None:
+        if name is None and max_players is None and is_public is None:
             raise BadRequestException(
                 message="At least one setting must be provided",
-                details={"max_players": max_players, "is_public": is_public}
+                details={"name": name, "max_players": max_players, "is_public": is_public}
             )
         # Get lobby
         lobby = await LobbyService.get_lobby(redis, lobby_code)
@@ -454,6 +595,35 @@ class LobbyService:
         # Check if user is host
         if lobby["host_id"] != user_id:
             raise ForbiddenException(message="Only the host can update lobby settings")
+        
+        # Handle name update separately if provided
+        if name is not None:
+            # Validate name
+            name = name.strip()
+            if not name or len(name) == 0:
+                raise BadRequestException(
+                    message="Lobby name cannot be empty",
+                    details={"name": "Name is required"}
+                )
+            
+            if len(name) > 50:
+                raise BadRequestException(
+                    message="Lobby name too long",
+                    details={"name": "Name must be at most 50 characters"}
+                )
+            
+            # Check if name is different
+            if lobby.get("name") != name:
+                # Check if name is available
+                is_available = await LobbyService.is_lobby_name_available(
+                    redis, name, exclude_lobby_code=lobby_code
+                )
+                
+                if not is_available:
+                    raise BadRequestException(
+                        message="Lobby name is already taken",
+                        details={"name": "This name is already in use by another lobby"}
+                    )
         
         # Validate max_players if provided
         if max_players is not None:
@@ -477,18 +647,47 @@ class LobbyService:
         lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
         lobby_data = json.loads(lobby_data_raw)
         
+        old_name = lobby_data.get("name")
+        name_changed = False
+        
+        if name is not None and name != old_name:
+            lobby_data["name"] = name
+            name_changed = True
         if max_players is not None:
             lobby_data["max_players"] = max_players
         if is_public is not None:
             lobby_data["is_public"] = is_public
         
-        await redis.set(
-            LobbyService._lobby_key(lobby_code),
-            json.dumps(lobby_data),
-            ex=LobbyService.LOBBY_TTL
-        )
+        # Use pipeline if name changed to update both lobby data and name mapping atomically
+        if name_changed:
+            async with redis.pipeline(transaction=True) as pipe:
+                # Update lobby data
+                pipe.set(
+                    LobbyService._lobby_key(lobby_code),
+                    json.dumps(lobby_data),
+                    ex=LobbyService.LOBBY_TTL
+                )
+                
+                # Remove old name mapping
+                if old_name:
+                    pipe.delete(LobbyService._lobby_name_to_code_key(old_name))
+                
+                # Add new name mapping
+                pipe.set(
+                    LobbyService._lobby_name_to_code_key(name),
+                    lobby_code,
+                    ex=LobbyService.LOBBY_TTL
+                )
+                
+                await pipe.execute()
+        else:
+            await redis.set(
+                LobbyService._lobby_key(lobby_code),
+                json.dumps(lobby_data),
+                ex=LobbyService.LOBBY_TTL
+            )
         
-        logger.info(f"Lobby {lobby_code} settings updated by host {user_id}: max_players={max_players}, is_public={is_public}")
+        logger.info(f"Lobby {lobby_code} settings updated by host {user_id}: name={name}, max_players={max_players}, is_public={is_public}")
         
         return await LobbyService.get_lobby(redis, lobby_code)
     
@@ -712,6 +911,13 @@ class LobbyService:
             redis: Redis client
             lobby_code: 6-character lobby code
         """
+        # Get lobby data to retrieve the name
+        lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
+        lobby_name = None
+        if lobby_data_raw:
+            lobby_data = json.loads(lobby_data_raw)
+            lobby_name = lobby_data.get("name")
+        
         # Get all members to clean up their user_lobby mappings
         members_raw = await redis.zrange(
             LobbyService._lobby_members_key(lobby_code),
@@ -724,6 +930,10 @@ class LobbyService:
         async with redis.pipeline(transaction=True) as pipe:
             pipe.delete(LobbyService._lobby_key(lobby_code))
             pipe.delete(LobbyService._lobby_members_key(lobby_code))
+            
+            # Delete lobby name mapping if it exists
+            if lobby_name:
+                pipe.delete(LobbyService._lobby_name_to_code_key(lobby_name))
             
             for member in members:
                 pipe.delete(LobbyService._user_lobby_key(member["user_id"]))
