@@ -49,8 +49,11 @@ async def create_lobby(
             host_id=current_user.id,
             host_nickname=current_user.nickname,
             host_pfp_path=current_user.pfp_path,
+            name=request.name,
             max_players=request.max_players,
-            is_public=request.is_public
+            is_public=request.is_public,
+            game_name=request.game_name,
+            game_rules=request.game_rules
         )
         
         return LobbyCreatedResponse(lobby_code=lobby["lobby_code"])
