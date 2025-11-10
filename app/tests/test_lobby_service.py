@@ -2705,3 +2705,185 @@ class TestLobbyService:
             game_name=None
         )
         assert len(all_lobbies_explicit) == 2
+    
+    async def test_get_lobby_with_selected_game_info(self, redis_client):
+        """Test that get_lobby returns selected_game_info with display_name for selected game"""
+        # Create lobby with tictactoe game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info is present
+        assert result is not None
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        
+        # Verify GameInfo fields
+        game_info = result["selected_game_info"]
+        assert game_info.game_name == "tictactoe"
+        assert game_info.display_name is not None
+        assert game_info.display_name != ""
+        assert game_info.description is not None
+        assert game_info.min_players >= 2
+        assert game_info.max_players >= game_info.min_players
+        assert isinstance(game_info.turn_based, bool)
+    
+    async def test_get_lobby_with_no_game_selected(self, redis_client):
+        """Test that get_lobby returns None for selected_game_info when no game is selected"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info is None
+        assert result is not None
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+    
+    async def test_select_game_populates_game_info(self, redis_client):
+        """Test that selecting a game populates selected_game_info"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Initially no game selected
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+        
+        # Select a game
+        await LobbyService.select_game(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1,
+            game_name="tictactoe"
+        )
+        
+        # Get lobby again
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify game info is now populated
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        assert result["selected_game_info"].game_name == "tictactoe"
+        assert result["selected_game_info"].display_name is not None
+    
+    async def test_clear_game_clears_game_info(self, redis_client):
+        """Test that clearing game selection also clears selected_game_info"""
+        # Create lobby with game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Verify game info exists
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        
+        # Clear game selection
+        await LobbyService.clear_game_selection(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1
+        )
+        
+        # Get lobby again
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify game info is now None
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+    
+    async def test_get_lobby_with_clobber_game_info(self, redis_client):
+        """Test that get_lobby returns correct game info for clobber game"""
+        # Create lobby with clobber game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=2,
+            game_name="clobber"
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info for clobber
+        assert result is not None
+        assert result["selected_game"] == "clobber"
+        assert result["selected_game_info"] is not None
+        
+        game_info = result["selected_game_info"]
+        assert game_info.game_name == "clobber"
+        assert game_info.display_name is not None
+        assert game_info.display_name != ""
+        assert game_info.display_name != "clobber"  # Should be human-readable, not just the code
+    
+    async def test_create_lobby_with_game_returns_selected_game(self, redis_client):
+        """Test that create_lobby with game_name returns selected_game in response"""
+        # Create lobby with tictactoe game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Verify selected_game is set immediately after creation
+        assert lobby is not None
+        assert lobby["selected_game"] == "tictactoe"
+        assert lobby["game_rules"] is not None
+        
+        # Verify it persists in Redis
+        retrieved_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert retrieved_lobby["selected_game"] == "tictactoe"
+        assert retrieved_lobby["selected_game_info"] is not None
+    
+    async def test_create_lobby_without_game_has_no_selected_game(self, redis_client):
+        """Test that create_lobby without game_name has selected_game as None"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Verify selected_game is None
+        assert lobby is not None
+        assert lobby.get("selected_game") is None
+        assert lobby.get("game_rules") == {}
+        
+        # Verify it persists in Redis
+        retrieved_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert retrieved_lobby.get("selected_game") is None
+        assert retrieved_lobby.get("selected_game_info") is None
