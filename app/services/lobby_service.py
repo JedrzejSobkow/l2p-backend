@@ -863,12 +863,16 @@ class LobbyService:
         return None
     
     @staticmethod
-    async def get_all_public_lobbies(redis: Redis) -> List[Dict[str, Any]]:
+    async def get_all_public_lobbies(
+        redis: Redis, 
+        game_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Get all public lobbies
+        Get all public lobbies, optionally filtered by selected game
         
         Args:
             redis: Redis client
+            game_name: Optional game name to filter lobbies by selected game
             
         Returns:
             List of public lobby details
@@ -889,7 +893,12 @@ class LobbyService:
                 lobby = await LobbyService.get_lobby(redis, lobby_code)
                 
                 if lobby and lobby.get("is_public", False):
-                    lobbies.append(lobby)
+                    # Filter by game if specified
+                    if game_name is not None:
+                        if lobby.get("selected_game") == game_name:
+                            lobbies.append(lobby)
+                    else:
+                        lobbies.append(lobby)
             
             if cursor == 0:
                 break

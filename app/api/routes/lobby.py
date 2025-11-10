@@ -1,6 +1,7 @@
 # app/api/routes/lobby.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from infrastructure.redis_connection import get_redis
 from api.routes.auth import current_active_user
 from models.registered_user import RegisteredUser
@@ -69,14 +70,18 @@ async def create_lobby(
 
 @router.get("/public", response_model=PublicLobbiesResponse)
 async def get_public_lobbies(
+    game_name: Optional[str] = Query(None, description="Filter lobbies by selected game"),
     current_user: RegisteredUser = Depends(current_active_user)
 ):
     """
-    Get all public lobbies
+    Get all public lobbies, optionally filtered by selected game
+    
+    Query Parameters:
+        game_name: Optional game name to filter lobbies (e.g., 'tictactoe')
     """
     try:
         redis = get_redis()
-        lobbies = await LobbyService.get_all_public_lobbies(redis)
+        lobbies = await LobbyService.get_all_public_lobbies(redis, game_name=game_name)
         
         lobbies_response = [
             LobbyResponse(

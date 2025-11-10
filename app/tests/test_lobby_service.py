@@ -2450,3 +2450,90 @@ class TestLobbyService:
         # Note: For boolean validation (line 147), we would need a game
         # with boolean rules. Since we don't have one in the test environment,
         # this test covers the string validation which is structurally identical.
+    
+    async def test_get_all_public_lobbies_filtered_by_game(self, redis_client):
+        """Test getting public lobbies filtered by selected game"""
+        # Create lobby with tictactoe
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        # Create lobby without game
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True
+        )
+        
+        # Create private lobby with tictactoe (should not appear)
+        lobby3 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=3,
+            host_nickname="Host3",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=False,
+            game_name="tictactoe"
+        )
+        
+        # Get all public lobbies
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) == 2  # Only public ones
+        
+        # Get lobbies filtered by tictactoe
+        tictactoe_lobbies = await LobbyService.get_all_public_lobbies(
+            redis_client, 
+            game_name="tictactoe"
+        )
+        assert len(tictactoe_lobbies) == 1
+        assert tictactoe_lobbies[0]["lobby_code"] == lobby1["lobby_code"]
+        assert tictactoe_lobbies[0]["selected_game"] == "tictactoe"
+        
+        # Get lobbies filtered by non-existent game
+        empty_lobbies = await LobbyService.get_all_public_lobbies(
+            redis_client,
+            game_name="nonexistent_game"
+        )
+        assert len(empty_lobbies) == 0
+    
+    async def test_get_all_public_lobbies_no_game_filter(self, redis_client):
+        """Test getting all public lobbies without game filter returns all"""
+        # Create multiple lobbies with different games
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True
+        )
+        
+        # Get all without filter
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) == 2
+        
+        # With None explicitly (should be same as no parameter)
+        all_lobbies_explicit = await LobbyService.get_all_public_lobbies(
+            redis_client,
+            game_name=None
+        )
+        assert len(all_lobbies_explicit) == 2
