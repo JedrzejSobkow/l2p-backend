@@ -179,17 +179,56 @@ class LobbyService:
                 details={"current_lobby": existing_lobby.decode() if isinstance(existing_lobby, bytes) else existing_lobby}
             )
         
+        # If custom name provided, validate it
+        if name:
+            # Validate name
+            name = name.strip()
+            if not name or len(name) == 0:
+                raise BadRequestException(
+                    message="Lobby name cannot be empty",
+                    details={"name": "Name is required"}
+                )
+            
+            if len(name) > 50:
+                raise BadRequestException(
+                    message="Lobby name too long",
+                    details={"name": "Name must be at most 50 characters"}
+                )
+            
+            # Check if name is already taken
+            existing_code = await redis.get(LobbyService._lobby_name_to_code_key(name))
+            if existing_code:
+                raise BadRequestException(
+                    message="Lobby name is already taken",
+                    details={"name": name, "suggestion": "Please choose a different name"}
+                )
+        
         # Generate unique lobby code
+        # If no custom name is provided, we also need to ensure the default name "Game: {code}" is unique
+        # This prevents conflicts where someone creates a custom name matching the default format
         lobby_code = LobbyService._generate_lobby_code()
         max_attempts = 10
         attempts = 0
         
-        while await redis.exists(LobbyService._lobby_key(lobby_code)) and attempts < max_attempts:
+        while attempts < max_attempts:
+            # Check if lobby code is already in use
+            code_exists = await redis.exists(LobbyService._lobby_key(lobby_code))
+            
+            # If no custom name provided, also check if default name would conflict
+            if not name:
+                lobby_name = f"Game: {lobby_code}"
+                name_taken = await redis.get(LobbyService._lobby_name_to_code_key(lobby_name))
+                if not code_exists and not name_taken:
+                    break  # Found unique code and name
+            else:
+                if not code_exists:
+                    break  # Found unique code (custom name already validated)
+            
             lobby_code = LobbyService._generate_lobby_code()
             attempts += 1
         
         if attempts >= max_attempts:
-            raise BadRequestException(message="Failed to generate unique lobby code")
+            raise BadRequestException(message="Failed to generate unique lobby code and name")
         
         now = datetime.now(UTC)
         

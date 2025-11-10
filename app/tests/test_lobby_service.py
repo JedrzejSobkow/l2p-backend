@@ -1905,6 +1905,174 @@ class TestLobbyService:
         
         assert "Lobby name is already taken" in str(exc.value.message)
     
+    async def test_create_lobby_with_duplicate_name_fails(self, redis_client):
+        """Test that creating a lobby with an already taken name fails"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Unique Name",
+            max_players=4
+        )
+        
+        # Try to create second lobby with same name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                name="Unique Name",
+                max_players=4
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+        assert "Unique Name" in str(exc.value.details)
+    
+    async def test_create_lobby_with_empty_name_fails(self, redis_client):
+        """Test that creating a lobby with empty name fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                name="   ",  # Only whitespace
+                max_players=4
+            )
+        
+        assert "Lobby name cannot be empty" in str(exc.value.message)
+    
+    async def test_create_lobby_with_too_long_name_fails(self, redis_client):
+        """Test that creating a lobby with too long name fails"""
+        long_name = "A" * 51  # 51 characters
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                name=long_name,
+                max_players=4
+            )
+        
+        assert "Lobby name too long" in str(exc.value.message)
+    
+    async def test_create_lobby_with_case_insensitive_duplicate_fails(self, redis_client):
+        """Test that creating a lobby with case-insensitive duplicate name fails"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Test Lobby",
+            max_players=4
+        )
+        
+        # Try to create second lobby with different case
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                name="TEST LOBBY",  # Different case
+                max_players=4
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_create_lobby_without_name_generates_unique_defaults(self, redis_client):
+        """Test that creating lobbies without custom names generates unique default names"""
+        # Create two lobbies without names
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Both should have different default names based on their codes
+        assert lobby1["name"] == f"Game: {lobby1['lobby_code']}"
+        assert lobby2["name"] == f"Game: {lobby2['lobby_code']}"
+        assert lobby1["name"] != lobby2["name"]
+    
+    async def test_create_lobby_with_custom_name_matching_default_format_fails(self, redis_client):
+        """Test that custom names cannot impersonate default lobby names"""
+        # Create a lobby without custom name to get a default name
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to create another lobby with a custom name that matches the default format
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                max_players=4,
+                name=lobby1["name"]  # Try to use the default name as custom
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_create_lobby_regenerates_code_on_default_name_conflict(self, redis_client, monkeypatch):
+        """Test that when generating a default name conflicts with existing custom name, code is regenerated"""
+        # Create a lobby with custom name matching a future default name format
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            name="Game: CONFLICT"  # Custom name matching default format
+        )
+        
+        # Mock _generate_lobby_code to return "CONFLICT" first, then something else
+        call_count = 0
+        original_generate = LobbyService._generate_lobby_code
+        
+        def mock_generate():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return "CONFLICT"  # This will conflict with the custom name above
+            return original_generate()  # Use real random code afterwards
+        
+        monkeypatch.setattr(LobbyService, "_generate_lobby_code", mock_generate)
+        
+        # Create a lobby without custom name - should regenerate when it hits "CONFLICT"
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Should have successfully created with a different code
+        assert lobby2["lobby_code"] != "CONFLICT"
+        assert lobby2["name"] == f"Game: {lobby2['lobby_code']}"
+        assert call_count >= 2  # Should have called generator at least twice
+    
     async def test_create_lobby_with_game_and_default_rules(self, redis_client):
         """Test creating a lobby with a game but without specifying rules (should use defaults)"""
         lobby = await LobbyService.create_lobby(
