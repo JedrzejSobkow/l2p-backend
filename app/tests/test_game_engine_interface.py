@@ -358,3 +358,262 @@ class TestGameEngineInterfaceExtended:
         remaining_time = engine.get_remaining_time(state, 1)
         
         assert remaining_time == 0  # Should be 0, not negative
+    
+    def test_timeout_seconds_must_be_positive_per_turn(self):
+        """Test that timeout_seconds must be positive when timeout is enabled (per_turn)"""
+        with pytest.raises(ValueError, match="timeout_seconds must be positive when timeout is enabled"):
+            MockMultiplayerEngine("TEST123", [1, 2], rules={
+                "timeout_type": "per_turn",
+                "timeout_seconds": 0  # Invalid: should be positive
+            })
+    
+    def test_timeout_seconds_must_be_positive_total_time(self):
+        """Test that timeout_seconds must be positive when timeout is enabled (total_time)"""
+        with pytest.raises(ValueError, match="timeout_seconds must be positive when timeout is enabled"):
+            MockMultiplayerEngine("TEST123", [1, 2], rules={
+                "timeout_type": "total_time",
+                "timeout_seconds": -10  # Invalid: negative
+            })
+    
+    def test_rule_validation_float_type(self):
+        """Test rule validation for float type"""
+        class MockFloatEngine(MockMultiplayerEngine):
+            @classmethod
+            def get_game_info(cls) -> GameInfo:
+                return GameInfo(
+                    game_name="mock_float",
+                    display_name="Mock Float Game",
+                    min_players=2,
+                    max_players=4,
+                    description="Mock game for testing float rules",
+                    supported_rules={
+                        "speed_multiplier": GameRuleOption(
+                            type="float",
+                            default=1.0,
+                            description="Game speed multiplier"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid float
+        engine = MockFloatEngine("TEST123", [1, 2], rules={"speed_multiplier": 1.5})
+        assert engine.rules["speed_multiplier"] == 1.5
+        
+        # Invalid: boolean
+        with pytest.raises(ValueError, match="speed_multiplier must be a number"):
+            MockFloatEngine("TEST123", [1, 2], rules={"speed_multiplier": True})
+        
+        # Valid: int should also work for float type
+        engine2 = MockFloatEngine("TEST123", [1, 2], rules={"speed_multiplier": 2})
+        assert engine2.rules["speed_multiplier"] == 2
+    
+    def test_rule_validation_boolean_type(self):
+        """Test rule validation for boolean type"""
+        class MockBoolEngine(MockMultiplayerEngine):
+            @classmethod
+            def get_game_info(cls) -> GameInfo:
+                return GameInfo(
+                    game_name="mock_bool",
+                    display_name="Mock Bool Game",
+                    min_players=2,
+                    max_players=4,
+                    description="Mock game for testing boolean rules",
+                    supported_rules={
+                        "friendly_fire": GameRuleOption(
+                            type="boolean",
+                            default=False,
+                            description="Enable friendly fire"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid boolean
+        engine = MockBoolEngine("TEST123", [1, 2], rules={"friendly_fire": True})
+        assert engine.rules["friendly_fire"] is True
+        
+        # Invalid: string
+        with pytest.raises(ValueError, match="friendly_fire must be a boolean"):
+            MockBoolEngine("TEST123", [1, 2], rules={"friendly_fire": "yes"})
+    
+    def test_rule_validation_string_type(self):
+        """Test rule validation for string type"""
+        class MockStringEngine(MockMultiplayerEngine):
+            @classmethod
+            def get_game_info(cls) -> GameInfo:
+                return GameInfo(
+                    game_name="mock_string",
+                    display_name="Mock String Game",
+                    min_players=2,
+                    max_players=4,
+                    description="Mock game for testing string rules",
+                    supported_rules={
+                        "difficulty": GameRuleOption(
+                            type="string",
+                            default="normal",
+                            allowed_values=["easy", "normal", "hard"],
+                            description="Game difficulty"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid string
+        engine = MockStringEngine("TEST123", [1, 2], rules={"difficulty": "hard"})
+        assert engine.rules["difficulty"] == "hard"
+        
+        # Invalid: integer
+        with pytest.raises(ValueError, match="difficulty must be a string"):
+            MockStringEngine("TEST123", [1, 2], rules={"difficulty": 123})
+    
+    def test_rule_validation_allowed_values(self):
+        """Test rule validation for allowed_values constraint"""
+        class MockConstraintEngine(MockMultiplayerEngine):
+            @classmethod
+            def get_game_info(cls) -> GameInfo:
+                return GameInfo(
+                    game_name="mock_constraint",
+                    display_name="Mock Constraint Game",
+                    min_players=2,
+                    max_players=4,
+                    description="Mock game for testing allowed values",
+                    supported_rules={
+                        "mode": GameRuleOption(
+                            type="string",
+                            default="standard",
+                            allowed_values=["standard", "turbo", "classic"],
+                            description="Game mode"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid value from allowed list
+        engine = MockConstraintEngine("TEST123", [1, 2], rules={"mode": "turbo"})
+        assert engine.rules["mode"] == "turbo"
+        
+        # Invalid: not in allowed values
+        with pytest.raises(ValueError, match="mode value 'invalid' is not in allowed values"):
+            MockConstraintEngine("TEST123", [1, 2], rules={"mode": "invalid"})
+    
+    def test_rule_validation_number_type(self):
+        """Test rule validation for 'number' type (accepts int or float)"""
+        class MockNumberEngine(MockMultiplayerEngine):
+            @classmethod
+            def get_game_info(cls) -> GameInfo:
+                return GameInfo(
+                    game_name="mock_number",
+                    display_name="Mock Number Game",
+                    min_players=2,
+                    max_players=4,
+                    description="Mock game for testing number rules",
+                    supported_rules={
+                        "score_multiplier": GameRuleOption(
+                            type="number",
+                            default=1.0,
+                            description="Score multiplier"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid: integer
+        engine1 = MockNumberEngine("TEST123", [1, 2], rules={"score_multiplier": 2})
+        assert engine1.rules["score_multiplier"] == 2
+        
+        # Valid: float
+        engine2 = MockNumberEngine("TEST123", [1, 2], rules={"score_multiplier": 1.5})
+        assert engine2.rules["score_multiplier"] == 1.5
+        
+        # Invalid: boolean
+        with pytest.raises(ValueError, match="score_multiplier must be a number"):
+            MockNumberEngine("TEST123", [1, 2], rules={"score_multiplier": False})
+    
+    def test_check_timeout_total_time_exceeded(self):
+        """Test timeout check for total time mode when time is exceeded"""
+        engine = MockMultiplayerEngine("TEST123", [1, 2], rules={
+            "timeout_type": "total_time",
+            "timeout_seconds": 300,
+            "timeout_action": "end_game"
+        })
+        state = engine.initialize_game_state()
+        
+        # Set player's remaining time very low
+        state["timing"]["player_time_remaining"]["1"] = 5
+        # Set turn start time to past (more than 5 seconds ago)
+        past_time = datetime.now(UTC) - timedelta(seconds=10)
+        state["timing"]["turn_start_time"] = past_time.isoformat()
+        
+        timeout_occurred, winner_id = engine.check_timeout(state)
+        
+        assert timeout_occurred is True
+        assert winner_id == 2  # Other player wins
+        assert engine.game_result == GameResult.TIMEOUT
+    
+    def test_validate_move_with_timeout(self):
+        """Test that validate_move rejects moves when timeout has occurred"""
+        engine = TicTacToeEngine("TEST123", [1, 2], rules={
+            "timeout_type": "per_turn",
+            "timeout_seconds": 10  # Use valid value for TicTacToe
+        })
+        state = engine.initialize_game_state()
+        
+        # Set turn start time way in past to trigger timeout
+        past_time = datetime.now(UTC) - timedelta(seconds=20)
+        state["timing"]["turn_start_time"] = past_time.isoformat()
+        
+        # Try to make a move - should fail due to timeout
+        result = engine.validate_move(state, 1, {"row": 0, "col": 0})
+        
+        assert result.valid is False
+        assert "Time limit exceeded" in result.error_message
+    
+    def test_check_timeout_no_timeout_when_within_limit(self):
+        """Test that check_timeout returns False when within time limit"""
+        engine = MockMultiplayerEngine("TEST123", [1, 2], rules={
+            "timeout_type": "per_turn",
+            "timeout_seconds": 30
+        })
+        state = engine.initialize_game_state()
+        state = engine.start_turn(state)
+        
+        # Check immediately - should not have timed out
+        timeout_occurred, winner_id = engine.check_timeout(state)
+        
+        assert timeout_occurred is False
+        assert winner_id is None
+    
+    def test_consume_turn_time_per_turn_mode_clears_start_time(self):
+        """Test that consume_turn_time clears turn_start_time in per_turn mode"""
+        engine = MockMultiplayerEngine("TEST123", [1, 2], rules={
+            "timeout_type": "per_turn",
+            "timeout_seconds": 30
+        })
+        state = engine.initialize_game_state()
+        state = engine.start_turn(state)
+        
+        # Turn start time should be set
+        assert state["timing"]["turn_start_time"] is not None
+        
+        # Consume turn time
+        state = engine.consume_turn_time(state)
+        
+        # Turn start time should be cleared
+        assert state["timing"]["turn_start_time"] is None
+    
+    def test_get_remaining_time_returns_none_for_unknown_timeout_type(self):
+        """Test that get_remaining_time returns None for edge cases"""
+        engine = MockMultiplayerEngine("TEST123", [1, 2], rules={
+            "timeout_type": "none"
+        })
+        state = engine.initialize_game_state()
+        
+        # Should return None for no timeout
+        remaining = engine.get_remaining_time(state, 1)
+        assert remaining is None
