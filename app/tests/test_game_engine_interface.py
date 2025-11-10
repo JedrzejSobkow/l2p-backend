@@ -291,8 +291,7 @@ class TestGameEngineInterfaceExtended:
     def test_initialization_with_none_timeout_type(self):
         """Test initialization when timeout_type is None or empty"""
         engine = TicTacToeEngine("TEST123", [1, 2], rules={
-            "timeout_type": None,
-            "timeout_seconds": 0
+            "timeout_type": None
         })
         
         assert engine.timeout_type == TimeoutType.NONE
@@ -331,12 +330,12 @@ class TestGameEngineInterfaceExtended:
         """Test that get_remaining_time doesn't return negative for per-turn"""
         engine = TicTacToeEngine("TEST123", [1, 2], rules={
             "timeout_type": "per_turn",
-            "timeout_seconds": 5
+            "timeout_seconds": 10  # Use valid value from allowed list
         })
         state = engine.initialize_game_state()
         
         # Set turn start time way in the past
-        past_time = datetime.now(UTC) - timedelta(seconds=10)
+        past_time = datetime.now(UTC) - timedelta(seconds=20)
         state["timing"]["turn_start_time"] = past_time.isoformat()
         
         remaining_time = engine.get_remaining_time(state, 1)

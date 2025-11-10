@@ -38,10 +38,11 @@ class TestGameTimeout:
     
     def test_initialization_invalid_timeout(self):
         """Test that initialization fails with invalid timeout configuration"""
-        with pytest.raises(ValueError, match="timeout_seconds must be positive"):
+        # Test with invalid timeout_type (not in allowed_values)
+        with pytest.raises(ValueError, match="timeout_type value"):
             TicTacToeEngine("TEST123", [1, 2], rules={
-                "timeout_type": "per_turn",
-                "timeout_seconds": 0
+                "timeout_type": "invalid_type",  # Not in allowed values
+                "timeout_seconds": 60
             })
     
     def test_timing_state_initialization_no_timeout(self):
@@ -140,12 +141,12 @@ class TestGameTimeout:
         """Test checking timeout when per-turn timeout has expired"""
         engine = TicTacToeEngine("TEST123", [1, 2], rules={
             "timeout_type": "per_turn",
-            "timeout_seconds": 1  # 1 second timeout
+            "timeout_seconds": 10  # 10 second timeout
         })
         state = engine.initialize_game_state()
         
-        # Manually set turn start time to past
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        # Manually set turn start time to past (more than 10 seconds ago)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)
         state["timing"]["turn_start_time"] = past_time.isoformat()
         
         timeout_occurred, winner_id = engine.check_timeout(state)
@@ -264,12 +265,12 @@ class TestGameTimeout:
         """Test that move validation fails when timeout occurs"""
         engine = TicTacToeEngine("TEST123", [1, 2], rules={
             "timeout_type": "per_turn",
-            "timeout_seconds": 1
+            "timeout_seconds": 10
         })
         state = engine.initialize_game_state()
         
-        # Manually set turn start time to past
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        # Manually set turn start time to past (more than 10 seconds ago)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)
         state["timing"]["turn_start_time"] = past_time.isoformat()
         
         result = engine.validate_move(state, 1, {"row": 0, "col": 0})
@@ -286,8 +287,11 @@ class TestGameTimeout:
         
         timeout_type_rule = game_info.supported_rules["timeout_type"]
         assert timeout_type_rule.default == "none"
+        assert timeout_type_rule.allowed_values == ["none", "total_time", "per_turn"]
         
         timeout_seconds_rule = game_info.supported_rules["timeout_seconds"]
         assert timeout_seconds_rule.type == "integer"
-        assert timeout_seconds_rule.min == 10
-        assert timeout_seconds_rule.max == 3600
+        assert 10 in timeout_seconds_rule.allowed_values
+        assert 300 in timeout_seconds_rule.allowed_values
+        assert 600 in timeout_seconds_rule.allowed_values
+
