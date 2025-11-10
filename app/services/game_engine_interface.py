@@ -96,6 +96,10 @@ class GameEngineInterface(ABC):
             if rule_name not in game_info.supported_rules:
                 continue
             
+            # Skip validation for None values - they'll use defaults
+            if rule_value is None:
+                continue
+            
             rule_option = game_info.supported_rules[rule_name]
             
             # Type validation

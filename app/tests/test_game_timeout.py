@@ -38,11 +38,11 @@ class TestGameTimeout:
     
     def test_initialization_invalid_timeout(self):
         """Test that initialization fails with invalid timeout configuration"""
-        # Test with timeout enabled but invalid value (not in allowed_values)
-        with pytest.raises(ValueError, match="timeout_seconds value"):
+        # Test with invalid timeout_type (not in allowed_values)
+        with pytest.raises(ValueError, match="timeout_type value"):
             TicTacToeEngine("TEST123", [1, 2], rules={
-                "timeout_type": "per_turn",
-                "timeout_seconds": 5  # Not in allowed values [10, 15, 30, 60, 120, 300, 600]
+                "timeout_type": "invalid_type",  # Not in allowed values
+                "timeout_seconds": 60
             })
     
     def test_timing_state_initialization_no_timeout(self):

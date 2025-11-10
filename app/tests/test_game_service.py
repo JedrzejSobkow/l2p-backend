@@ -342,7 +342,7 @@ class TestGameService:
     
     async def test_make_move_timeout_ends_game(self, redis_client):
         """Test timeout that ends the game"""
-        # Create game with very short timeout
+        # Create game with short timeout
         await GameService.create_game(
             redis=redis_client,
             lobby_code="TIMEOUT1",
@@ -350,7 +350,7 @@ class TestGameService:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -359,8 +359,8 @@ class TestGameService:
         state_raw = await redis_client.get(GameService._game_state_key("TIMEOUT1"))
         game_state = json.loads(state_raw)
         
-        # Set turn start time to 2 seconds ago
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        # Set turn start time to 12 seconds ago (past the 10 second timeout)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         
         await redis_client.set(
@@ -391,7 +391,7 @@ class TestGameService:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "skip_turn"
             }
         )
@@ -400,8 +400,8 @@ class TestGameService:
         state_raw = await redis_client.get(GameService._game_state_key("TIMEOUT2"))
         game_state = json.loads(state_raw)
         
-        # Set turn start time to 2 seconds ago
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        # Set turn start time to 12 seconds ago (past the 10 second timeout)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         
         await redis_client.set(

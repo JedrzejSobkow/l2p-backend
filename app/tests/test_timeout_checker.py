@@ -1,4 +1,4 @@
-# app/tests/test_timeout_checker.py
+    # app/tests/test_timeout_checker.py
 
 import pytest
 import json
@@ -91,7 +91,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -99,7 +99,7 @@ class TestTimeoutChecker:
         # Set turn start time to past to trigger timeout
         state_raw = await redis_client.get(GameService._game_state_key("TIMEOUT_END"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("TIMEOUT_END"),
@@ -134,7 +134,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "skip_turn"
             }
         )
@@ -142,7 +142,7 @@ class TestTimeoutChecker:
         # Set turn start time to past to trigger timeout
         state_raw = await redis_client.get(GameService._game_state_key("TIMEOUT_SKIP"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("TIMEOUT_SKIP"),
@@ -260,7 +260,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -268,7 +268,7 @@ class TestTimeoutChecker:
         # Set turn start time to past to trigger timeout
         state_raw = await redis_client.get(GameService._game_state_key("EXCEPTION_TEST"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("EXCEPTION_TEST"),
@@ -299,7 +299,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -307,7 +307,7 @@ class TestTimeoutChecker:
         # Set turn start time to past
         state_raw = await redis_client.get(GameService._game_state_key("EVENT_TEST"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("EVENT_TEST"),
@@ -341,7 +341,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "skip_turn"
             }
         )
@@ -349,7 +349,7 @@ class TestTimeoutChecker:
         # Set turn start time to past
         state_raw = await redis_client.get(GameService._game_state_key("SKIP_EVENT_TEST"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("SKIP_EVENT_TEST"),
@@ -389,7 +389,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,  # 1 second timeout
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -399,10 +399,10 @@ class TestTimeoutChecker:
         value = await redis_client.get(timeout_key)
         assert value is not None
         
-        # Set turn start time to past to trigger timeout (more than 1 second ago)
+        # Set turn start time to past to trigger timeout
         state_raw = await redis_client.get(GameService._game_state_key("CLEAR_KEY_TEST"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("CLEAR_KEY_TEST"),
@@ -469,7 +469,7 @@ class TestTimeoutChecker:
             player_ids=[1, 2],
             rules={
                 "timeout_type": "per_turn",
-                "timeout_seconds": 1,
+                "timeout_seconds": 10,  # Use valid value from allowed list
                 "timeout_action": "end_game"
             }
         )
@@ -477,7 +477,7 @@ class TestTimeoutChecker:
         # Set turn start time to past
         state_raw = await redis_client.get(GameService._game_state_key("MULTI_TIMEOUT"))
         game_state = json.loads(state_raw)
-        past_time = datetime.now(UTC) - timedelta(seconds=2)
+        past_time = datetime.now(UTC) - timedelta(seconds=12)  # Past the 10 second timeout
         game_state["timing"]["turn_start_time"] = past_time.isoformat()
         await redis_client.set(
             GameService._game_state_key("MULTI_TIMEOUT"),
