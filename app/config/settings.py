@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE"  # Must be changed in .env file!
     JWT_LIFETIME_SECONDS: int = 3600  # 1 hour
     
+    # Google OAuth Configuration
+    GOOGLE_OAUTH_CLIENT_ID: str = "CHANGE-THIS-IN-PRODUCTION-USE-ENV-FILE"
+    GOOGLE_OAUTH_CLIENT_SECRET: str = "CHANGE-THIS-IN-PRODUCTION-USE-ENV-FILE" 
+    
     # MinIO Configuration
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -58,6 +62,7 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-USE-ENV-FILE" # Must be changed in .env file!
     EMAIL_FROM: str = "L2P <noreply@rychu777.com>"  # Your verified domain
     FRONTEND_URL: str = "http://localhost:5173"  # Frontend URL for verification links #TODO ADD REDIRECT
+    BACKEND_URL: str = "http://localhost:8000"  # Backend URL for OAuth callbacks
     
     @property
     def DATABASE_URL(self) -> str:
