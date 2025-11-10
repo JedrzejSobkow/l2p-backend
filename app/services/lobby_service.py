@@ -114,14 +114,62 @@ class LobbyService:
                     }
                 )
             
+            engine_class = GameService.GAME_ENGINES[game_name]
+            game_info = engine_class.get_game_info()
+            
             # If game_name provided without rules, use defaults
             if game_rules is None:
-                engine_class = GameService.GAME_ENGINES[game_name]
-                game_info = engine_class.get_game_info()
                 game_rules = {
                     rule_name: rule_config.default
                     for rule_name, rule_config in game_info.supported_rules.items()
                 }
+            else:
+                # Validate provided rules
+                for rule_name, rule_value in game_rules.items():
+                    if rule_name not in game_info.supported_rules:
+                        raise BadRequestException(
+                            message=f"Unknown rule: {rule_name}",
+                            details={
+                                "supported_rules": list(game_info.supported_rules.keys()),
+                                "invalid_rule": rule_name
+                            }
+                        )
+                    
+                    rule_config = game_info.supported_rules[rule_name]
+                    
+                    # Validate type
+                    if rule_config.type == "integer" and not isinstance(rule_value, int):
+                        raise BadRequestException(
+                            message=f"Rule '{rule_name}' must be an integer",
+                            details={"rule_name": rule_name, "provided_value": rule_value}
+                        )
+                    elif rule_config.type == "boolean" and not isinstance(rule_value, bool):
+                        raise BadRequestException(
+                            message=f"Rule '{rule_name}' must be a boolean",
+                            details={"rule_name": rule_name, "provided_value": rule_value}
+                        )
+                    elif rule_config.type == "string" and not isinstance(rule_value, str):
+                        raise BadRequestException(
+                            message=f"Rule '{rule_name}' must be a string",
+                            details={"rule_name": rule_name, "provided_value": rule_value}
+                        )
+                    
+                    # Validate allowed_values if specified
+                    if rule_config.allowed_values is not None:
+                        if rule_value not in rule_config.allowed_values:
+                            raise BadRequestException(
+                                message=f"Invalid value for rule '{rule_name}'",
+                                details={
+                                    "rule_name": rule_name,
+                                    "provided_value": rule_value,
+                                    "allowed_values": rule_config.allowed_values
+                                }
+                            )
+                
+                # Fill in missing rules with defaults
+                for rule_name, rule_config in game_info.supported_rules.items():
+                    if rule_name not in game_rules:
+                        game_rules[rule_name] = rule_config.default
         
         # Check if user is already in a lobby
         existing_lobby = await redis.get(LobbyService._user_lobby_key(host_id))
@@ -1318,36 +1366,38 @@ class LobbyService:
             
             rule_config = game_info.supported_rules[rule_name]
             
-            # Validate based on rule type
+            # Validate type
             if rule_config.type == "integer":
                 if not isinstance(rule_value, int):
                     raise BadRequestException(
                         message=f"Rule '{rule_name}' must be an integer",
-                        details={"rule_name": rule_name, "provided_value": rule_value}
-                    )
-                if rule_config.min is not None and rule_value < rule_config.min:
-                    raise BadRequestException(
-                        message=f"Rule '{rule_name}' is below minimum",
-                        details={"rule_name": rule_name, "min": rule_config.min, "value": rule_value}
-                    )
-                if rule_config.max is not None and rule_value > rule_config.max:
-                    raise BadRequestException(
-                        message=f"Rule '{rule_name}' exceeds maximum",
-                        details={"rule_name": rule_name, "max": rule_config.max, "value": rule_value}
+                        details={"rule_name": rule_name, "provided_value": rule_value, "expected_type": "integer"}
                     )
             
             elif rule_config.type == "boolean":
                 if not isinstance(rule_value, bool):
                     raise BadRequestException(
                         message=f"Rule '{rule_name}' must be a boolean",
-                        details={"rule_name": rule_name, "provided_value": rule_value}
+                        details={"rule_name": rule_name, "provided_value": rule_value, "expected_type": "boolean"}
                     )
             
             elif rule_config.type == "string":
                 if not isinstance(rule_value, str):
                     raise BadRequestException(
                         message=f"Rule '{rule_name}' must be a string",
-                        details={"rule_name": rule_name, "provided_value": rule_value}
+                        details={"rule_name": rule_name, "provided_value": rule_value, "expected_type": "string"}
+                    )
+            
+            # Validate allowed_values if specified
+            if rule_config.allowed_values is not None:
+                if rule_value not in rule_config.allowed_values:
+                    raise BadRequestException(
+                        message=f"Invalid value for rule '{rule_name}'",
+                        details={
+                            "rule_name": rule_name,
+                            "provided_value": rule_value,
+                            "allowed_values": rule_config.allowed_values
+                        }
                     )
         
         # Update lobby data
