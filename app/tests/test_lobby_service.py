@@ -1499,3 +1499,407 @@ class TestLobbyService:
         )
         
         assert len(messages) == 0
+
+
+    # ========== Tests for Lobby Name Updates ==========
+    
+    async def test_create_lobby_with_custom_name(self, redis_client):
+        """Test creating a lobby with a custom name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="My Custom Lobby",
+            max_players=4
+        )
+        
+        assert lobby["name"] == "My Custom Lobby"
+        
+        # Verify name is registered in Redis
+        name_to_code = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("My Custom Lobby")
+        )
+        name_to_code_str = name_to_code.decode() if isinstance(name_to_code, bytes) else name_to_code
+        assert name_to_code_str == lobby["lobby_code"]
+    
+    async def test_create_lobby_without_custom_name(self, redis_client):
+        """Test creating a lobby without custom name uses default"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        assert lobby["name"] == f"Game: {lobby['lobby_code']}"
+    
+    async def test_is_lobby_name_available_when_available(self, redis_client):
+        """Test checking if lobby name is available"""
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="Available Name"
+        )
+        
+        assert is_available is True
+    
+    async def test_is_lobby_name_available_when_taken(self, redis_client):
+        """Test checking if lobby name is taken"""
+        # Create lobby with specific name
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Taken Name",
+            max_players=4
+        )
+        
+        # Check if name is available
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="Taken Name"
+        )
+        
+        assert is_available is False
+    
+    async def test_is_lobby_name_available_exclude_own_lobby(self, redis_client):
+        """Test that checking name availability excludes own lobby code"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="My Lobby",
+            max_players=4
+        )
+        
+        # Check if same name is available when excluding own lobby
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="My Lobby",
+            exclude_lobby_code=lobby["lobby_code"]
+        )
+        
+        assert is_available is True
+    
+    async def test_update_lobby_name_success(self, redis_client):
+        """Test successfully updating lobby name"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Old Name",
+            max_players=4
+        )
+        
+        # Update name
+        updated_lobby = await LobbyService.update_lobby_name(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            new_name="New Name"
+        )
+        
+        assert updated_lobby["name"] == "New Name"
+        
+        # Verify old name mapping is removed
+        old_name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Old Name")
+        )
+        assert old_name_mapping is None
+        
+        # Verify new name mapping exists
+        new_name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("New Name")
+        )
+        new_name_str = new_name_mapping.decode() if isinstance(new_name_mapping, bytes) else new_name_mapping
+        assert new_name_str == lobby["lobby_code"]
+    
+    async def test_update_lobby_name_not_host(self, redis_client):
+        """Test that non-host cannot update lobby name"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Join as second user
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Member"
+        )
+        
+        # Try to update name as non-host
+        with pytest.raises(ForbiddenException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=2,
+                new_name="New Name"
+            )
+        
+        assert "Only the host can change the lobby name" in str(exc.value.message)
+    
+    async def test_update_lobby_name_empty_name(self, redis_client):
+        """Test updating lobby name with empty name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                new_name="   "  # Only whitespace
+            )
+        
+        assert "Lobby name cannot be empty" in str(exc.value.message)
+    
+    async def test_update_lobby_name_too_long(self, redis_client):
+        """Test updating lobby name with too long name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        long_name = "A" * 51  # Exceeds 50 character limit
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                new_name=long_name
+            )
+        
+        assert "Lobby name too long" in str(exc.value.message)
+    
+    async def test_update_lobby_name_already_taken(self, redis_client):
+        """Test updating lobby name to already taken name"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="First Lobby",
+            max_players=4
+        )
+        
+        # Create second lobby
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            name="Second Lobby",
+            max_players=4
+        )
+        
+        # Try to update second lobby to first lobby's name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                new_name="First Lobby"
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_update_lobby_name_same_name(self, redis_client):
+        """Test updating lobby name to the same name (no-op)"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Same Name",
+            max_players=4
+        )
+        
+        # Update to same name
+        updated_lobby = await LobbyService.update_lobby_name(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            new_name="Same Name"
+        )
+        
+        assert updated_lobby["name"] == "Same Name"
+    
+    async def test_update_lobby_name_lobby_not_found(self, redis_client):
+        """Test updating lobby name for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                user_id=1,
+                new_name="New Name"
+            )
+        
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_update_lobby_settings_with_name(self, redis_client):
+        """Test updating lobby settings including name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Old Name",
+            max_players=4
+        )
+        
+        # Update settings including name
+        updated_lobby = await LobbyService.update_lobby_settings(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            name="New Name",
+            max_players=6,
+            is_public=True
+        )
+        
+        assert updated_lobby["name"] == "New Name"
+        assert updated_lobby["max_players"] == 6
+        assert updated_lobby["is_public"] is True
+        
+        # Verify name mapping updated
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("New Name")
+        )
+        name_mapping_str = name_mapping.decode() if isinstance(name_mapping, bytes) else name_mapping
+        assert name_mapping_str == lobby["lobby_code"]
+    
+    async def test_update_lobby_settings_name_already_taken(self, redis_client):
+        """Test updating lobby settings with taken name"""
+        # Create two lobbies
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Taken Name",
+            max_players=4
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            name="Other Name",
+            max_players=4
+        )
+        
+        # Try to update lobby2 to lobby1's name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                name="Taken Name"
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_update_lobby_settings_only_name(self, redis_client):
+        """Test updating only lobby name via update_lobby_settings"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Update only name
+        updated_lobby = await LobbyService.update_lobby_settings(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            name="Only Name Updated"
+        )
+        
+        assert updated_lobby["name"] == "Only Name Updated"
+        assert updated_lobby["max_players"] == 4  # Unchanged
+    
+    async def test_close_lobby_removes_name_mapping(self, redis_client):
+        """Test that closing lobby removes name mapping"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Lobby To Close",
+            max_players=4
+        )
+        
+        # Verify name mapping exists
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Lobby To Close")
+        )
+        assert name_mapping is not None
+        
+        # Close lobby (via leave_lobby when last member leaves)
+        await LobbyService.leave_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1
+        )
+        
+        # Verify name mapping is removed
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Lobby To Close")
+        )
+        assert name_mapping is None
+    
+    async def test_lobby_name_case_insensitive(self, redis_client):
+        """Test that lobby names are case-insensitive for uniqueness"""
+        # Create lobby with specific name
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Test Lobby",
+            max_players=4
+        )
+        
+        # Try to create another lobby with same name but different case
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to update to same name with different case
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                new_name="TEST LOBBY"  # Different case
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
