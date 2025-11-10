@@ -72,6 +72,7 @@ class LobbyNamespace(AuthNamespace):
                         members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                         created_at=lobby["created_at"],
                         selected_game=lobby.get("selected_game"),
+                        selected_game_info=lobby.get("selected_game_info"),
                         game_rules=lobby.get("game_rules", {})
                     )
                     await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
@@ -164,6 +165,7 @@ class LobbyNamespace(AuthNamespace):
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"],
                 selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
                 game_rules=lobby.get("game_rules", {})
             )
             await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
@@ -269,6 +271,7 @@ class LobbyNamespace(AuthNamespace):
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"],
                 selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
                 game_rules=lobby.get("game_rules", {})
             )
             response = LobbyJoinedResponse(lobby=lobby_response)
@@ -584,6 +587,7 @@ class LobbyNamespace(AuthNamespace):
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
                 created_at=lobby["created_at"],
                 selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
                 game_rules=lobby.get("game_rules", {})
             )
             await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
@@ -626,7 +630,10 @@ class LobbyNamespace(AuthNamespace):
                     current_players=lobby["current_players"],
                     is_public=lobby.get("is_public", False),
                     members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                    created_at=lobby["created_at"]
+                    created_at=lobby["created_at"],
+                    selected_game=lobby.get("selected_game"),
+                    selected_game_info=lobby.get("selected_game_info"),
+                    game_rules=lobby.get("game_rules", {})
                 )
                 for lobby in lobbies
             ]

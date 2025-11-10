@@ -245,11 +245,23 @@ class LobbyService:
         
         members = [json.loads(m) for m in members_raw]
         
+        # Get game info if a game is selected
+        selected_game_info = None
+        if lobby_data.get("selected_game"):
+            try:
+                from services.game_service import GameService
+                engine_class = GameService.GAME_ENGINES.get(lobby_data["selected_game"])
+                if engine_class:
+                    selected_game_info = engine_class.get_game_info()
+            except Exception as e:
+                logger.warning(f"Failed to get game info for {lobby_data.get('selected_game')}: {str(e)}")
+        
         return {
             **lobby_data,
             "current_players": len(members),
             "members": members,
             "created_at": datetime.fromisoformat(lobby_data["created_at"]),
+            "selected_game_info": selected_game_info,
         }
     
     @staticmethod

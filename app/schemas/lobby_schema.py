@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from schemas.game_schema import GameInfo
 
 
 # ================ Request Models (HTTP & WebSocket) ================
@@ -146,6 +147,7 @@ class LobbyResponse(BaseModel):
     members: List[LobbyMemberResponse]
     created_at: datetime
     selected_game: Optional[str] = None
+    selected_game_info: Optional[GameInfo] = None
     game_rules: Dict[str, Any] = Field(default_factory=dict)
     
     class Config:

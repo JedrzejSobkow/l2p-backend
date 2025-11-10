@@ -87,7 +87,10 @@ async def get_public_lobbies(
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                created_at=lobby["created_at"]
+                created_at=lobby["created_at"],
+                selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
+                game_rules=lobby.get("game_rules", {})
             )
             for lobby in lobbies
         ]
@@ -133,7 +136,10 @@ async def get_lobby(
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except HTTPException:
@@ -174,7 +180,10 @@ async def join_lobby(
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
         return LobbyJoinedResponse(lobby=lobby_response)
@@ -268,7 +277,10 @@ async def update_lobby_settings(
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except NotFoundException as e:
@@ -326,7 +338,10 @@ async def transfer_host(
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except NotFoundException as e:
@@ -431,7 +446,10 @@ async def get_my_lobby(
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except HTTPException:
