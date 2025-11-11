@@ -2887,3 +2887,73 @@ class TestLobbyService:
         retrieved_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
         assert retrieved_lobby.get("selected_game") is None
         assert retrieved_lobby.get("selected_game_info") is None
+    
+    async def test_get_public_lobbies_with_game_name_filter(self, redis_client):
+        """Test filtering public lobbies by game_name (for WebSocket endpoint)"""
+        # Create public lobbies with different games
+        lobby_ttt1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=100,
+            host_nickname="TTTHost1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby_ttt2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=101,
+            host_nickname="TTTHost2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby_clobber = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=102,
+            host_nickname="ClobberHost",
+            host_pfp_path=None,
+            max_players=2,
+            is_public=True,
+            game_name="clobber"
+        )
+        
+        lobby_no_game = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=103,
+            host_nickname="NoGameHost",
+            host_pfp_path=None,
+            max_players=6,
+            is_public=True
+        )
+        
+        # Test 1: Get all public lobbies (no filter)
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) >= 4
+        
+        # Test 2: Filter by tictactoe
+        ttt_lobbies = await LobbyService.get_all_public_lobbies(redis_client, game_name="tictactoe")
+        assert len(ttt_lobbies) >= 2
+        for lobby in ttt_lobbies:
+            assert lobby["selected_game"] == "tictactoe"
+            assert lobby["selected_game_info"] is not None
+            assert lobby["selected_game_info"].display_name == "Tic-Tac-Toe"
+        
+        # Test 3: Filter by clobber
+        clobber_lobbies = await LobbyService.get_all_public_lobbies(redis_client, game_name="clobber")
+        assert len(clobber_lobbies) >= 1
+        for lobby in clobber_lobbies:
+            assert lobby["selected_game"] == "clobber"
+            assert lobby["selected_game_info"] is not None
+            assert lobby["selected_game_info"].display_name == "Clobber"
+        
+        # Test 4: Filter by None (should return all, including those without game)
+        all_lobbies_explicit = await LobbyService.get_all_public_lobbies(redis_client, game_name=None)
+        assert len(all_lobbies_explicit) >= 4
+        
+        # Verify the no-game lobby is in unfiltered results
+        no_game_codes = [l["lobby_code"] for l in all_lobbies_explicit if l["selected_game"] is None]
+        assert lobby_no_game["lobby_code"] in no_game_codes

@@ -602,9 +602,9 @@ class LobbyNamespace(AuthNamespace):
     
     async def on_get_public_lobbies(self, sid, data):
         """
-        Get all public lobbies
+        Get all public lobbies, optionally filtered by game
         
-        Expected data: {} (no parameters needed)
+        Expected data: {"game_name": str (optional)}
         """
         try:
             user_id = manager.get_user_id(sid)
@@ -616,9 +616,12 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            # Get all public lobbies
+            # Extract optional game_name filter
+            game_name = data.get("game_name") if data else None
+            
+            # Get all public lobbies (optionally filtered by game)
             redis = get_redis()
-            lobbies = await LobbyService.get_all_public_lobbies(redis)
+            lobbies = await LobbyService.get_all_public_lobbies(redis, game_name=game_name)
             
             # Convert to response format
             lobbies_response = [
