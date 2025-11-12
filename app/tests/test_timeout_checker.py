@@ -490,3 +490,239 @@ class TestTimeoutChecker:
         # Verify game ended with timeout result
         game = await GameService.get_game(redis_client, "MULTI_TIMEOUT")
         assert game["game_state"]["result"] == GameResult.TIMEOUT.value
+    
+    async def test_start_pubsub_lifecycle(self, redis_client):
+        """Test the start method's pubsub lifecycle"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        # Mock pubsub to return a few messages then stop
+        mock_pubsub = AsyncMock()
+        mock_messages = [
+            {"type": "subscribe"},
+            {
+                "type": "pmessage",
+                "data": b"game_timeout:TEST123"
+            },
+            {"type": "message"},  # Should be ignored (not pmessage)
+        ]
+        
+        async def message_generator():
+            for msg in mock_messages:
+                yield msg
+                # Stop after processing messages
+                if msg.get("type") == "message":
+                    checker.is_running = False
+        
+        mock_pubsub.listen = MagicMock(return_value=message_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        # Mock Redis pubsub and config_set
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                with patch.object(checker, '_handle_timeout', AsyncMock()) as mock_handle:
+                    await checker.start()
+                    
+                    # Verify pubsub was set up correctly
+                    redis_client.config_set.assert_called_once_with("notify-keyspace-events", "Ex")
+                    mock_pubsub.psubscribe.assert_called_once_with("__keyevent@0__:expired")
+                    
+                    # Verify _handle_timeout was called for the game_timeout key
+                    mock_handle.assert_called_once_with("TEST123")
+                    
+                    # Verify cleanup
+                    mock_pubsub.unsubscribe.assert_called_once()
+                    mock_pubsub.close.assert_called_once()
+    
+    async def test_start_handles_non_timeout_keys(self, redis_client):
+        """Test that start ignores keys that don't match timeout pattern"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        mock_pubsub = AsyncMock()
+        mock_messages = [
+            {"type": "subscribe"},
+            {
+                "type": "pmessage",
+                "data": b"some_other_key:value"  # Not a timeout key
+            },
+        ]
+        
+        async def message_generator():
+            for msg in mock_messages:
+                yield msg
+                if msg.get("type") == "pmessage":
+                    checker.is_running = False
+        
+        mock_pubsub.listen = MagicMock(return_value=message_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                with patch.object(checker, '_handle_timeout', AsyncMock()) as mock_handle:
+                    await checker.start()
+                    
+                    # _handle_timeout should NOT be called for non-timeout keys
+                    mock_handle.assert_not_called()
+    
+    async def test_start_handles_message_processing_error(self, redis_client):
+        """Test that start handles errors in message processing gracefully"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        mock_pubsub = AsyncMock()
+        mock_messages = [
+            {"type": "subscribe"},
+            {
+                "type": "pmessage",
+                "data": b"game_timeout:ERROR_CASE"
+            },
+            {
+                "type": "pmessage",
+                "data": b"game_timeout:SUCCESS_CASE"
+            },
+        ]
+        
+        call_count = 0
+        async def message_generator():
+            nonlocal call_count
+            for msg in mock_messages:
+                yield msg
+                call_count += 1
+                if call_count >= len(mock_messages):
+                    checker.is_running = False
+        
+        mock_pubsub.listen = MagicMock(return_value=message_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        # Make _handle_timeout raise exception on first call, succeed on second
+        async def handle_with_error(lobby_code):
+            if lobby_code == "ERROR_CASE":
+                raise RuntimeError("Intentional error")
+        
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                with patch.object(checker, '_handle_timeout', AsyncMock(side_effect=handle_with_error)) as mock_handle:
+                    await checker.start()
+                    
+                    # Both calls should have been attempted despite first error
+                    assert mock_handle.call_count == 2
+                    mock_handle.assert_any_call("ERROR_CASE")
+                    mock_handle.assert_any_call("SUCCESS_CASE")
+    
+    async def test_start_handles_data_as_string(self, redis_client):
+        """Test that start handles message data as string (not bytes)"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        mock_pubsub = AsyncMock()
+        mock_messages = [
+            {"type": "subscribe"},
+            {
+                "type": "pmessage",
+                "data": "game_timeout:STRING_KEY"  # String, not bytes
+            },
+        ]
+        
+        async def message_generator():
+            for msg in mock_messages:
+                yield msg
+                if msg.get("type") == "pmessage":
+                    checker.is_running = False
+        
+        mock_pubsub.listen = MagicMock(return_value=message_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                with patch.object(checker, '_handle_timeout', AsyncMock()) as mock_handle:
+                    await checker.start()
+                    
+                    # Should handle string data correctly
+                    mock_handle.assert_called_once_with("STRING_KEY")
+    
+    async def test_start_handles_pubsub_setup_error(self, redis_client):
+        """Test that start handles errors during pubsub setup"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        # Make config_set raise an error
+        with patch.object(redis_client, 'config_set', AsyncMock(side_effect=RuntimeError("Config error"))):
+            # Should not raise, just log error
+            await checker.start()
+            
+            # checker.is_running gets set to True at start, error in try block doesn't reset it
+            # because it's caught in outer except. The finally block would clean up pubsub.
+            # This is expected behavior - is_running just tracks intent, not success
+    
+    async def test_start_cleanup_on_exception_in_loop(self, redis_client):
+        """Test that pubsub is properly cleaned up even if loop raises exception"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        mock_pubsub = AsyncMock()
+        
+        # Make listen() raise an exception
+        async def error_generator():
+            raise RuntimeError("Loop error")
+            yield  # This won't be reached
+        
+        mock_pubsub.listen = MagicMock(return_value=error_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                await checker.start()
+                
+                # Cleanup should still happen
+                mock_pubsub.unsubscribe.assert_called_once()
+                mock_pubsub.close.assert_called_once()
+    
+    async def test_start_stop_during_loop(self, redis_client):
+        """Test that stop() during the listen loop exits gracefully"""
+        sio_mock = MagicMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        mock_pubsub = AsyncMock()
+        mock_messages = [
+            {"type": "subscribe"},
+            {"type": "pmessage", "data": b"game_timeout:FIRST"},
+            {"type": "pmessage", "data": b"game_timeout:SECOND"},  # Won't be processed
+        ]
+        
+        messages_processed = 0
+        async def message_generator():
+            nonlocal messages_processed
+            for msg in mock_messages:
+                yield msg
+                messages_processed += 1
+                # Stop after first pmessage
+                if msg.get("type") == "pmessage" and messages_processed == 2:
+                    checker.stop()  # This sets is_running = False
+        
+        mock_pubsub.listen = MagicMock(return_value=message_generator())
+        mock_pubsub.psubscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+        
+        with patch.object(redis_client, 'pubsub', return_value=mock_pubsub):
+            with patch.object(redis_client, 'config_set', AsyncMock()):
+                with patch.object(checker, '_handle_timeout', AsyncMock()) as mock_handle:
+                    await checker.start()
+                    
+                    # Only first message should be handled, loop should break after
+                    mock_handle.assert_called_once_with("FIRST")
+                    
+                    # Cleanup should still happen
+                    mock_pubsub.unsubscribe.assert_called_once()
+                    mock_pubsub.close.assert_called_once()

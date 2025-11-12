@@ -1,6 +1,7 @@
 # app/tests/test_lobby_service.py
 
 import pytest
+import json
 from datetime import datetime, UTC
 from services.lobby_service import LobbyService
 from exceptions.domain_exceptions import (
@@ -1499,3 +1500,1460 @@ class TestLobbyService:
         )
         
         assert len(messages) == 0
+
+
+    # ========== Tests for Lobby Name Updates ==========
+    
+    async def test_create_lobby_with_custom_name(self, redis_client):
+        """Test creating a lobby with a custom name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="My Custom Lobby",
+            max_players=4
+        )
+        
+        assert lobby["name"] == "My Custom Lobby"
+        
+        # Verify name is registered in Redis
+        name_to_code = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("My Custom Lobby")
+        )
+        name_to_code_str = name_to_code.decode() if isinstance(name_to_code, bytes) else name_to_code
+        assert name_to_code_str == lobby["lobby_code"]
+    
+    async def test_create_lobby_without_custom_name(self, redis_client):
+        """Test creating a lobby without custom name uses default"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        assert lobby["name"] == f"Game: {lobby['lobby_code']}"
+    
+    async def test_is_lobby_name_available_when_available(self, redis_client):
+        """Test checking if lobby name is available"""
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="Available Name"
+        )
+        
+        assert is_available is True
+    
+    async def test_is_lobby_name_available_when_taken(self, redis_client):
+        """Test checking if lobby name is taken"""
+        # Create lobby with specific name
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Taken Name",
+            max_players=4
+        )
+        
+        # Check if name is available
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="Taken Name"
+        )
+        
+        assert is_available is False
+    
+    async def test_is_lobby_name_available_exclude_own_lobby(self, redis_client):
+        """Test that checking name availability excludes own lobby code"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="My Lobby",
+            max_players=4
+        )
+        
+        # Check if same name is available when excluding own lobby
+        is_available = await LobbyService.is_lobby_name_available(
+            redis=redis_client,
+            name="My Lobby",
+            exclude_lobby_code=lobby["lobby_code"]
+        )
+        
+        assert is_available is True
+    
+    async def test_update_lobby_name_success(self, redis_client):
+        """Test successfully updating lobby name"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Old Name",
+            max_players=4
+        )
+        
+        # Update name
+        updated_lobby = await LobbyService.update_lobby_name(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            new_name="New Name"
+        )
+        
+        assert updated_lobby["name"] == "New Name"
+        
+        # Verify old name mapping is removed
+        old_name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Old Name")
+        )
+        assert old_name_mapping is None
+        
+        # Verify new name mapping exists
+        new_name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("New Name")
+        )
+        new_name_str = new_name_mapping.decode() if isinstance(new_name_mapping, bytes) else new_name_mapping
+        assert new_name_str == lobby["lobby_code"]
+    
+    async def test_update_lobby_name_not_host(self, redis_client):
+        """Test that non-host cannot update lobby name"""
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Join as second user
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Member"
+        )
+        
+        # Try to update name as non-host
+        with pytest.raises(ForbiddenException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=2,
+                new_name="New Name"
+            )
+        
+        assert "Only the host can change the lobby name" in str(exc.value.message)
+    
+    async def test_update_lobby_name_empty_name(self, redis_client):
+        """Test updating lobby name with empty name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                new_name="   "  # Only whitespace
+            )
+        
+        assert "Lobby name cannot be empty" in str(exc.value.message)
+    
+    async def test_update_lobby_name_too_long(self, redis_client):
+        """Test updating lobby name with too long name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        long_name = "A" * 51  # Exceeds 50 character limit
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                new_name=long_name
+            )
+        
+        assert "Lobby name too long" in str(exc.value.message)
+    
+    async def test_update_lobby_name_already_taken(self, redis_client):
+        """Test updating lobby name to already taken name"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="First Lobby",
+            max_players=4
+        )
+        
+        # Create second lobby
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            name="Second Lobby",
+            max_players=4
+        )
+        
+        # Try to update second lobby to first lobby's name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                new_name="First Lobby"
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_update_lobby_name_same_name(self, redis_client):
+        """Test updating lobby name to the same name (no-op)"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Same Name",
+            max_players=4
+        )
+        
+        # Update to same name
+        updated_lobby = await LobbyService.update_lobby_name(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            new_name="Same Name"
+        )
+        
+        assert updated_lobby["name"] == "Same Name"
+    
+    async def test_update_lobby_name_lobby_not_found(self, redis_client):
+        """Test updating lobby name for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code="NOTEXIST",
+                user_id=1,
+                new_name="New Name"
+            )
+        
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_update_lobby_settings_with_name(self, redis_client):
+        """Test updating lobby settings including name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Old Name",
+            max_players=4
+        )
+        
+        # Update settings including name
+        updated_lobby = await LobbyService.update_lobby_settings(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            name="New Name",
+            max_players=6,
+            is_public=True
+        )
+        
+        assert updated_lobby["name"] == "New Name"
+        assert updated_lobby["max_players"] == 6
+        assert updated_lobby["is_public"] is True
+        
+        # Verify name mapping updated
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("New Name")
+        )
+        name_mapping_str = name_mapping.decode() if isinstance(name_mapping, bytes) else name_mapping
+        assert name_mapping_str == lobby["lobby_code"]
+    
+    async def test_update_lobby_settings_name_already_taken(self, redis_client):
+        """Test updating lobby settings with taken name"""
+        # Create two lobbies
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Taken Name",
+            max_players=4
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            name="Other Name",
+            max_players=4
+        )
+        
+        # Try to update lobby2 to lobby1's name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                name="Taken Name"
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_update_lobby_settings_only_name(self, redis_client):
+        """Test updating only lobby name via update_lobby_settings"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Update only name
+        updated_lobby = await LobbyService.update_lobby_settings(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1,
+            name="Only Name Updated"
+        )
+        
+        assert updated_lobby["name"] == "Only Name Updated"
+        assert updated_lobby["max_players"] == 4  # Unchanged
+    
+    async def test_close_lobby_removes_name_mapping(self, redis_client):
+        """Test that closing lobby removes name mapping"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            name="Lobby To Close",
+            max_players=4
+        )
+        
+        # Verify name mapping exists
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Lobby To Close")
+        )
+        assert name_mapping is not None
+        
+        # Close lobby (via leave_lobby when last member leaves)
+        await LobbyService.leave_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=1
+        )
+        
+        # Verify name mapping is removed
+        name_mapping = await redis_client.get(
+            LobbyService._lobby_name_to_code_key("Lobby To Close")
+        )
+        assert name_mapping is None
+    
+    async def test_lobby_name_case_insensitive(self, redis_client):
+        """Test that lobby names are case-insensitive for uniqueness"""
+        # Create lobby with specific name
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Test Lobby",
+            max_players=4
+        )
+        
+        # Try to create another lobby with same name but different case
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to update to same name with different case
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_name(
+                redis=redis_client,
+                lobby_code=lobby2["lobby_code"],
+                user_id=2,
+                new_name="TEST LOBBY"  # Different case
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_create_lobby_with_duplicate_name_fails(self, redis_client):
+        """Test that creating a lobby with an already taken name fails"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Unique Name",
+            max_players=4
+        )
+        
+        # Try to create second lobby with same name
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                name="Unique Name",
+                max_players=4
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+        assert "Unique Name" in str(exc.value.details)
+    
+    async def test_create_lobby_with_empty_name_fails(self, redis_client):
+        """Test that creating a lobby with empty name fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                name="   ",  # Only whitespace
+                max_players=4
+            )
+        
+        assert "Lobby name cannot be empty" in str(exc.value.message)
+    
+    async def test_create_lobby_with_too_long_name_fails(self, redis_client):
+        """Test that creating a lobby with too long name fails"""
+        long_name = "A" * 51  # 51 characters
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                name=long_name,
+                max_players=4
+            )
+        
+        assert "Lobby name too long" in str(exc.value.message)
+    
+    async def test_create_lobby_with_case_insensitive_duplicate_fails(self, redis_client):
+        """Test that creating a lobby with case-insensitive duplicate name fails"""
+        # Create first lobby
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            name="Test Lobby",
+            max_players=4
+        )
+        
+        # Try to create second lobby with different case
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                name="TEST LOBBY",  # Different case
+                max_players=4
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_create_lobby_without_name_generates_unique_defaults(self, redis_client):
+        """Test that creating lobbies without custom names generates unique default names"""
+        # Create two lobbies without names
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Both should have different default names based on their codes
+        assert lobby1["name"] == f"Game: {lobby1['lobby_code']}"
+        assert lobby2["name"] == f"Game: {lobby2['lobby_code']}"
+        assert lobby1["name"] != lobby2["name"]
+    
+    async def test_create_lobby_with_custom_name_matching_default_format_fails(self, redis_client):
+        """Test that custom names cannot impersonate default lobby names"""
+        # Create a lobby without custom name to get a default name
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to create another lobby with a custom name that matches the default format
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=2,
+                host_nickname="Host2",
+                host_pfp_path=None,
+                max_players=4,
+                name=lobby1["name"]  # Try to use the default name as custom
+            )
+        
+        assert "Lobby name is already taken" in str(exc.value.message)
+    
+    async def test_create_lobby_regenerates_code_on_default_name_conflict(self, redis_client, monkeypatch):
+        """Test that when generating a default name conflicts with existing custom name, code is regenerated"""
+        # Create a lobby with custom name matching a future default name format
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            name="Game: CONFLICT"  # Custom name matching default format
+        )
+        
+        # Mock _generate_lobby_code to return "CONFLICT" first, then something else
+        call_count = 0
+        original_generate = LobbyService._generate_lobby_code
+        
+        def mock_generate():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return "CONFLICT"  # This will conflict with the custom name above
+            return original_generate()  # Use real random code afterwards
+        
+        monkeypatch.setattr(LobbyService, "_generate_lobby_code", mock_generate)
+        
+        # Create a lobby without custom name - should regenerate when it hits "CONFLICT"
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Should have successfully created with a different code
+        assert lobby2["lobby_code"] != "CONFLICT"
+        assert lobby2["name"] == f"Game: {lobby2['lobby_code']}"
+        assert call_count >= 2  # Should have called generator at least twice
+    
+    async def test_create_lobby_with_game_and_default_rules(self, redis_client):
+        """Test creating a lobby with a game but without specifying rules (should use defaults)"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        assert lobby["selected_game"] == "tictactoe"
+        assert lobby["game_rules"] is not None
+        assert "board_size" in lobby["game_rules"]
+        assert lobby["game_rules"]["board_size"] == 3  # default
+        assert lobby["game_rules"]["win_length"] == 3  # default
+    
+    async def test_create_lobby_with_valid_game_rules(self, redis_client):
+        """Test creating a lobby with valid custom game rules"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe",
+            game_rules={
+                "board_size": 5,
+                "win_length": 4,
+                "timeout_type": "per_turn",
+                "timeout_seconds": 60
+            }
+        )
+        
+        assert lobby["selected_game"] == "tictactoe"
+        assert lobby["game_rules"]["board_size"] == 5
+        assert lobby["game_rules"]["win_length"] == 4
+        assert lobby["game_rules"]["timeout_type"] == "per_turn"
+        assert lobby["game_rules"]["timeout_seconds"] == 60
+    
+    async def test_create_lobby_with_invalid_game_rule_value(self, redis_client):
+        """Test that creating a lobby with an invalid rule value fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                max_players=4,
+                game_name="tictactoe",
+                game_rules={
+                    "board_size": 10  # Not in allowed_values [3, 4, 5]
+                }
+            )
+        
+        assert "Invalid value for rule 'board_size'" in str(exc.value.message)
+        assert "allowed_values" in str(exc.value.details)
+    
+    async def test_create_lobby_with_invalid_game_rule_type(self, redis_client):
+        """Test that creating a lobby with wrong rule type fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                max_players=4,
+                game_name="tictactoe",
+                game_rules={
+                    "board_size": "large"  # Should be integer
+                }
+            )
+        
+        assert "must be an integer" in str(exc.value.message)
+    
+    async def test_create_lobby_with_unknown_game_rule(self, redis_client):
+        """Test that creating a lobby with unknown rule fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                max_players=4,
+                game_name="tictactoe",
+                game_rules={
+                    "unknown_rule": 5
+                }
+            )
+        
+        assert "Unknown rule: unknown_rule" in str(exc.value.message)
+        assert "supported_rules" in str(exc.value.details)
+    
+    async def test_update_game_rules_with_valid_values(self, redis_client):
+        """Test updating game rules with valid values"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Update rules
+        result = await LobbyService.update_game_rules(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1,
+            rules={
+                "board_size": 4,
+                "win_length": 4
+            }
+        )
+        
+        assert result["rules"]["board_size"] == 4
+        assert result["rules"]["win_length"] == 4
+        
+        # Verify changes persisted
+        updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert updated_lobby["game_rules"]["board_size"] == 4
+        assert updated_lobby["game_rules"]["win_length"] == 4
+    
+    async def test_update_game_rules_with_invalid_value(self, redis_client):
+        """Test that updating game rules with invalid value fails"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={
+                    "board_size": 99  # Not in allowed_values
+                }
+            )
+        
+        assert "Invalid value for rule 'board_size'" in str(exc.value.message)
+    
+    async def test_update_game_rules_with_invalid_type(self, redis_client):
+        """Test that updating game rules with wrong type fails"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={
+                    "timeout_type": 123  # Should be string
+                }
+            )
+        
+        assert "must be a string" in str(exc.value.message)
+    
+    async def test_create_lobby_partial_rules_fills_defaults(self, redis_client):
+        """Test that creating a lobby with partial rules fills missing ones with defaults"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe",
+            game_rules={
+                "board_size": 5  # Only specify board_size
+            }
+        )
+        
+        # All other rules should have defaults
+        assert lobby["game_rules"]["board_size"] == 5  # User-specified
+        assert lobby["game_rules"]["win_length"] == 3  # Default
+        assert lobby["game_rules"]["timeout_type"] == "none"  # Default
+        assert lobby["game_rules"]["timeout_seconds"] == 300  # Default
+    
+    async def test_create_lobby_with_invalid_game_name(self, redis_client):
+        """Test that creating a lobby with invalid game name fails"""
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                max_players=4,
+                game_name="nonexistent_game"
+            )
+        
+        assert "Unknown game type" in str(exc.value.message)
+        assert "nonexistent_game" in str(exc.value.details)
+    
+    async def test_update_lobby_settings_with_empty_name_after_strip(self, redis_client):
+        """Test that updating with whitespace-only name fails"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            name="Initial Name"
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_id=1,
+                name="   "  # Only whitespace
+            )
+        
+        assert "Lobby name cannot be empty" in str(exc.value.message)
+    
+    async def test_get_lobby_with_game_info_exception(self, redis_client):
+        """Test that get_lobby handles exceptions when fetching game info"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Manually set an invalid game name in Redis
+        lobby_key = f"lobby:{lobby['lobby_code']}"
+        lobby_data_raw = await redis_client.get(lobby_key)
+        lobby_data = json.loads(lobby_data_raw)
+        lobby_data["selected_game"] = "invalid_game_that_doesnt_exist"
+        await redis_client.set(lobby_key, json.dumps(lobby_data), ex=3600)
+        
+        # Should still return lobby without crashing
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result is not None
+        assert result["selected_game"] == "invalid_game_that_doesnt_exist"
+        assert result.get("selected_game_info") is None  # Should be None due to exception
+    
+    async def test_select_game_success(self, redis_client):
+        """Test selecting a game for a lobby"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        result = await LobbyService.select_game(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1,
+            game_name="tictactoe"
+        )
+        
+        assert result["lobby"]["selected_game"] == "tictactoe"
+        assert "game_info" in result
+        assert "current_rules" in result
+        assert result["current_rules"]["board_size"] == 3  # Default
+    
+    async def test_select_game_invalid_game_name(self, redis_client):
+        """Test selecting an invalid game name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.select_game(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                game_name="invalid_game"
+            )
+        
+        assert "Unknown game type" in str(exc.value.message)
+    
+    async def test_select_game_not_host(self, redis_client):
+        """Test that non-host cannot select a game"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        with pytest.raises(ForbiddenException) as exc:
+            await LobbyService.select_game(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=2,  # Not the host
+                game_name="tictactoe"
+            )
+        
+        assert "Only the host can select a game" in str(exc.value.message)
+    
+    async def test_select_game_lobby_not_found(self, redis_client):
+        """Test selecting game for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.select_game(
+                redis=redis_client,
+                lobby_code="ABCDEF",
+                host_id=1,
+                game_name="tictactoe"
+            )
+        
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_update_game_rules_not_host(self, redis_client):
+        """Test that non-host cannot update game rules"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        with pytest.raises(ForbiddenException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=2,  # Not the host
+                rules={"board_size": 4}
+            )
+        
+        assert "Only the host can update game rules" in str(exc.value.message)
+    
+    async def test_update_game_rules_lobby_not_found(self, redis_client):
+        """Test updating game rules for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code="ABCDEF",
+                host_id=1,
+                rules={"board_size": 4}
+            )
+        
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_update_game_rules_no_game_selected(self, redis_client):
+        """Test updating game rules when no game is selected"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={"board_size": 4}
+            )
+        
+        assert "No game selected" in str(exc.value.message)
+    
+    async def test_update_game_rules_unknown_rule(self, redis_client):
+        """Test updating with unknown rule name"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={"unknown_rule": 999}
+            )
+        
+        assert "Unknown rule" in str(exc.value.message)
+    
+    async def test_update_game_rules_integer_type_validation(self, redis_client):
+        """Test that integer rule type is validated"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={"board_size": "three"}  # Should be integer
+            )
+        
+        assert "must be an integer" in str(exc.value.message)
+    
+    async def test_update_game_rules_boolean_type_validation(self, redis_client):
+        """Test that boolean rule type is validated - we'll use a mock scenario"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Since tictactoe doesn't have boolean rules, we test the string type instead
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_game_rules(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                rules={"timeout_type": 123}  # Should be string
+            )
+        
+        assert "must be a string" in str(exc.value.message)
+    
+    async def test_clear_game_selection_success(self, redis_client):
+        """Test clearing game selection from lobby"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Clear game selection
+        result = await LobbyService.clear_game_selection(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1
+        )
+        
+        assert result["lobby_code"] == lobby["lobby_code"]
+        assert "Game selection cleared" in result["message"]
+        
+        # Verify it was cleared
+        updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert updated_lobby["selected_game"] is None
+        assert updated_lobby["game_rules"] == {}
+    
+    async def test_clear_game_selection_not_host(self, redis_client):
+        """Test that non-host cannot clear game selection"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        with pytest.raises(ForbiddenException) as exc:
+            await LobbyService.clear_game_selection(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=2  # Not the host
+            )
+        
+        assert "Only the host can clear game selection" in str(exc.value.message)
+    
+    async def test_clear_game_selection_lobby_not_found(self, redis_client):
+        """Test clearing game selection for non-existent lobby"""
+        with pytest.raises(NotFoundException) as exc:
+            await LobbyService.clear_game_selection(
+                redis=redis_client,
+                lobby_code="ABCDEF",
+                host_id=1
+            )
+        
+        assert "Lobby not found" in str(exc.value.message)
+    
+    async def test_create_lobby_with_boolean_string_rule_validation(self, redis_client):
+        """Test that create_lobby validates boolean and string rule types correctly"""
+        # We need to mock a game with boolean rules to test this path
+        # Since tictactoe doesn't have boolean rules in reality, we'll test
+        # the code paths using the existing string type validation
+        
+        # Test string type validation (covers line 152)
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.create_lobby(
+                redis=redis_client,
+                host_id=1,
+                host_nickname="Host",
+                host_pfp_path=None,
+                max_players=4,
+                game_name="tictactoe",
+                game_rules={
+                    "timeout_type": 999  # Should be string, not int
+                }
+            )
+        
+        assert "must be a string" in str(exc.value.message)
+        
+        # Note: For boolean validation (line 147), we would need a game
+        # with boolean rules. Since we don't have one in the test environment,
+        # this test covers the string validation which is structurally identical.
+    
+    async def test_get_all_public_lobbies_filtered_by_game(self, redis_client):
+        """Test getting public lobbies filtered by selected game"""
+        # Create lobby with tictactoe
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        # Create lobby without game
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True
+        )
+        
+        # Create private lobby with tictactoe (should not appear)
+        lobby3 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=3,
+            host_nickname="Host3",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=False,
+            game_name="tictactoe"
+        )
+        
+        # Get all public lobbies
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) == 2  # Only public ones
+        
+        # Get lobbies filtered by tictactoe
+        tictactoe_lobbies = await LobbyService.get_all_public_lobbies(
+            redis_client, 
+            game_name="tictactoe"
+        )
+        assert len(tictactoe_lobbies) == 1
+        assert tictactoe_lobbies[0]["lobby_code"] == lobby1["lobby_code"]
+        assert tictactoe_lobbies[0]["selected_game"] == "tictactoe"
+        
+        # Get lobbies filtered by non-existent game
+        empty_lobbies = await LobbyService.get_all_public_lobbies(
+            redis_client,
+            game_name="nonexistent_game"
+        )
+        assert len(empty_lobbies) == 0
+    
+    async def test_get_all_public_lobbies_no_game_filter(self, redis_client):
+        """Test getting all public lobbies without game filter returns all"""
+        # Create multiple lobbies with different games
+        lobby1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=2,
+            host_nickname="Host2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True
+        )
+        
+        # Get all without filter
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) == 2
+        
+        # With None explicitly (should be same as no parameter)
+        all_lobbies_explicit = await LobbyService.get_all_public_lobbies(
+            redis_client,
+            game_name=None
+        )
+        assert len(all_lobbies_explicit) == 2
+    
+    async def test_get_lobby_with_selected_game_info(self, redis_client):
+        """Test that get_lobby returns selected_game_info with display_name for selected game"""
+        # Create lobby with tictactoe game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info is present
+        assert result is not None
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        
+        # Verify GameInfo fields
+        game_info = result["selected_game_info"]
+        assert game_info.game_name == "tictactoe"
+        assert game_info.display_name is not None
+        assert game_info.display_name != ""
+        assert game_info.description is not None
+        assert game_info.min_players >= 2
+        assert game_info.max_players >= game_info.min_players
+        assert isinstance(game_info.turn_based, bool)
+    
+    async def test_get_lobby_with_no_game_selected(self, redis_client):
+        """Test that get_lobby returns None for selected_game_info when no game is selected"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info is None
+        assert result is not None
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+    
+    async def test_select_game_populates_game_info(self, redis_client):
+        """Test that selecting a game populates selected_game_info"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Initially no game selected
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+        
+        # Select a game
+        await LobbyService.select_game(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1,
+            game_name="tictactoe"
+        )
+        
+        # Get lobby again
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify game info is now populated
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        assert result["selected_game_info"].game_name == "tictactoe"
+        assert result["selected_game_info"].display_name is not None
+    
+    async def test_clear_game_clears_game_info(self, redis_client):
+        """Test that clearing game selection also clears selected_game_info"""
+        # Create lobby with game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Verify game info exists
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result["selected_game"] == "tictactoe"
+        assert result["selected_game_info"] is not None
+        
+        # Clear game selection
+        await LobbyService.clear_game_selection(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1
+        )
+        
+        # Get lobby again
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify game info is now None
+        assert result.get("selected_game") is None
+        assert result.get("selected_game_info") is None
+    
+    async def test_get_lobby_with_clobber_game_info(self, redis_client):
+        """Test that get_lobby returns correct game info for clobber game"""
+        # Create lobby with clobber game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=2,
+            game_name="clobber"
+        )
+        
+        # Get lobby
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        
+        # Verify selected_game_info for clobber
+        assert result is not None
+        assert result["selected_game"] == "clobber"
+        assert result["selected_game_info"] is not None
+        
+        game_info = result["selected_game_info"]
+        assert game_info.game_name == "clobber"
+        assert game_info.display_name is not None
+        assert game_info.display_name != ""
+        assert game_info.display_name != "clobber"  # Should be human-readable, not just the code
+    
+    async def test_create_lobby_with_game_returns_selected_game(self, redis_client):
+        """Test that create_lobby with game_name returns selected_game in response"""
+        # Create lobby with tictactoe game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4,
+            game_name="tictactoe"
+        )
+        
+        # Verify selected_game is set immediately after creation
+        assert lobby is not None
+        assert lobby["selected_game"] == "tictactoe"
+        assert lobby["game_rules"] is not None
+        
+        # Verify it persists in Redis
+        retrieved_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert retrieved_lobby["selected_game"] == "tictactoe"
+        assert retrieved_lobby["selected_game_info"] is not None
+    
+    async def test_create_lobby_without_game_has_no_selected_game(self, redis_client):
+        """Test that create_lobby without game_name has selected_game as None"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Verify selected_game is None
+        assert lobby is not None
+        assert lobby.get("selected_game") is None
+        assert lobby.get("game_rules") == {}
+        
+        # Verify it persists in Redis
+        retrieved_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert retrieved_lobby.get("selected_game") is None
+        assert retrieved_lobby.get("selected_game_info") is None
+    
+    async def test_get_public_lobbies_with_game_name_filter(self, redis_client):
+        """Test filtering public lobbies by game_name (for WebSocket endpoint)"""
+        # Create public lobbies with different games
+        lobby_ttt1 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=100,
+            host_nickname="TTTHost1",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby_ttt2 = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=101,
+            host_nickname="TTTHost2",
+            host_pfp_path=None,
+            max_players=4,
+            is_public=True,
+            game_name="tictactoe"
+        )
+        
+        lobby_clobber = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=102,
+            host_nickname="ClobberHost",
+            host_pfp_path=None,
+            max_players=2,
+            is_public=True,
+            game_name="clobber"
+        )
+        
+        lobby_no_game = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=103,
+            host_nickname="NoGameHost",
+            host_pfp_path=None,
+            max_players=6,
+            is_public=True
+        )
+        
+        # Test 1: Get all public lobbies (no filter)
+        all_lobbies = await LobbyService.get_all_public_lobbies(redis_client)
+        assert len(all_lobbies) >= 4
+        
+        # Test 2: Filter by tictactoe
+        ttt_lobbies = await LobbyService.get_all_public_lobbies(redis_client, game_name="tictactoe")
+        assert len(ttt_lobbies) >= 2
+        for lobby in ttt_lobbies:
+            assert lobby["selected_game"] == "tictactoe"
+            assert lobby["selected_game_info"] is not None
+            assert lobby["selected_game_info"].display_name == "Tic-Tac-Toe"
+        
+        # Test 3: Filter by clobber
+        clobber_lobbies = await LobbyService.get_all_public_lobbies(redis_client, game_name="clobber")
+        assert len(clobber_lobbies) >= 1
+        for lobby in clobber_lobbies:
+            assert lobby["selected_game"] == "clobber"
+            assert lobby["selected_game_info"] is not None
+            assert lobby["selected_game_info"].display_name == "Clobber"
+        
+        # Test 4: Filter by None (should return all, including those without game)
+        all_lobbies_explicit = await LobbyService.get_all_public_lobbies(redis_client, game_name=None)
+        assert len(all_lobbies_explicit) >= 4
+        
+        # Verify the no-game lobby is in unfiltered results
+        no_game_codes = [l["lobby_code"] for l in all_lobbies_explicit if l["selected_game"] is None]
+        assert lobby_no_game["lobby_code"] in no_game_codes

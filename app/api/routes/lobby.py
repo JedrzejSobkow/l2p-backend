@@ -1,6 +1,7 @@
 # app/api/routes/lobby.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from infrastructure.redis_connection import get_redis
 from api.routes.auth import current_active_user
 from models.registered_user import RegisteredUser
@@ -48,8 +49,11 @@ async def create_lobby(
             host_id=current_user.id,
             host_nickname=current_user.nickname,
             host_pfp_path=current_user.pfp_path,
+            name=request.name,
             max_players=request.max_players,
-            is_public=request.is_public
+            is_public=request.is_public,
+            game_name=request.game_name,
+            game_rules=request.game_rules
         )
         
         return LobbyCreatedResponse(lobby_code=lobby["lobby_code"])
@@ -69,24 +73,32 @@ async def create_lobby(
 
 @router.get("/public", response_model=PublicLobbiesResponse)
 async def get_public_lobbies(
+    game_name: Optional[str] = Query(None, description="Filter lobbies by selected game"),
     current_user: RegisteredUser = Depends(current_active_user)
 ):
     """
-    Get all public lobbies
+    Get all public lobbies, optionally filtered by selected game
+    
+    Query Parameters:
+        game_name: Optional game name to filter lobbies (e.g., 'tictactoe')
     """
     try:
         redis = get_redis()
-        lobbies = await LobbyService.get_all_public_lobbies(redis)
+        lobbies = await LobbyService.get_all_public_lobbies(redis, game_name=game_name)
         
         lobbies_response = [
             LobbyResponse(
                 lobby_code=lobby["lobby_code"],
+                name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                created_at=lobby["created_at"]
+                created_at=lobby["created_at"],
+                selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
+                game_rules=lobby.get("game_rules", {})
             )
             for lobby in lobbies
         ]
@@ -110,7 +122,7 @@ async def get_lobby(
     current_user: RegisteredUser = Depends(current_active_user)
 ):
     """
-    Get lobby information by code
+    Get lobby details
     
     - **lobby_code**: 6-character lobby code
     """
@@ -126,12 +138,16 @@ async def get_lobby(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except HTTPException:
@@ -166,12 +182,16 @@ async def join_lobby(
         
         lobby_response = LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
         return LobbyJoinedResponse(lobby=lobby_response)
@@ -242,7 +262,9 @@ async def update_lobby_settings(
     Update lobby settings (host only)
     
     - **lobby_code**: 6-character lobby code
+    - **name**: New lobby name (must be unique)
     - **max_players**: New maximum number of players (2-6)
+    - **is_public**: Whether the lobby is public or private
     """
     try:
         redis = get_redis()
@@ -250,18 +272,23 @@ async def update_lobby_settings(
             redis=redis,
             lobby_code=lobby_code.upper(),
             user_id=current_user.id,
+            name=request.name,
             max_players=request.max_players,
             is_public=request.is_public
         )
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except NotFoundException as e:
@@ -313,12 +340,16 @@ async def transfer_host(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except NotFoundException as e:
@@ -417,12 +448,16 @@ async def get_my_lobby(
         
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
+            name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
             host_id=lobby["host_id"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
             members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-            created_at=lobby["created_at"]
+            created_at=lobby["created_at"],
+            selected_game=lobby.get("selected_game"),
+            selected_game_info=lobby.get("selected_game_info"),
+            game_rules=lobby.get("game_rules", {})
         )
         
     except HTTPException:

@@ -249,3 +249,99 @@ class TestTicTacToeEngine:
         result, winner = engine.check_game_result(state)
         assert result == GameResult.PLAYER_WIN
         assert winner == 1
+    
+    def test_initialization_win_length_exceeds_board_size(self):
+        """Test that win_length cannot exceed board_size"""
+        with pytest.raises(ValueError, match="Win length cannot exceed board size"):
+            TicTacToeEngine("TEST123", [1, 2], rules={"board_size": 3, "win_length": 5})
+    
+    def test_validate_move_missing_row_field(self):
+        """Test validation fails when 'row' field is missing"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        result = engine.validate_move(state, 1, {"col": 0})  # Missing 'row'
+        
+        assert result.valid is False
+        assert "must contain 'row' and 'col' fields" in result.error_message
+    
+    def test_validate_move_missing_col_field(self):
+        """Test validation fails when 'col' field is missing"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        result = engine.validate_move(state, 1, {"row": 0})  # Missing 'col'
+        
+        assert result.valid is False
+        assert "must contain 'row' and 'col' fields" in result.error_message
+    
+    def test_validate_move_non_integer_row(self):
+        """Test validation fails when row is not an integer"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        result = engine.validate_move(state, 1, {"row": "invalid", "col": 0})
+        
+        assert result.valid is False
+        assert "must be integers" in result.error_message
+    
+    def test_validate_move_non_integer_col(self):
+        """Test validation fails when col is not an integer"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        result = engine.validate_move(state, 1, {"row": 0, "col": None})
+        
+        assert result.valid is False
+        assert "must be integers" in result.error_message
+    
+    def test_check_winner_anti_diagonal(self):
+        """Test win detection on anti-diagonal (top-right to bottom-left)"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        # Player 1 wins on anti-diagonal: (0,2), (1,1), (2,0)
+        state = engine.apply_move(state, 1, {"row": 0, "col": 2})  # X
+        state = engine.apply_move(state, 2, {"row": 0, "col": 0})  # O
+        state = engine.apply_move(state, 1, {"row": 1, "col": 1})  # X
+        state = engine.apply_move(state, 2, {"row": 0, "col": 1})  # O
+        state = engine.apply_move(state, 1, {"row": 2, "col": 0})  # X wins
+        
+        result, winner = engine.check_game_result(state)
+        
+        assert result == GameResult.PLAYER_WIN
+        assert winner == 1
+    
+    def test_check_line_with_short_line(self):
+        """Test _check_line returns None when line is shorter than win_length"""
+        engine = TicTacToeEngine("TEST123", [1, 2], rules={"board_size": 5, "win_length": 4})
+        state = engine.initialize_game_state()
+        
+        # Place only 2 symbols in a row (less than win_length=4)
+        state = engine.apply_move(state, 1, {"row": 0, "col": 0})
+        state = engine.apply_move(state, 2, {"row": 1, "col": 0})
+        state = engine.apply_move(state, 1, {"row": 0, "col": 1})
+        
+        result, winner = engine.check_game_result(state)
+        
+        # Should be in progress, not won
+        assert result == GameResult.IN_PROGRESS
+        assert winner is None
+    
+    def test_check_line_no_consecutive_win(self):
+        """Test _check_line returns None when there's no consecutive winning sequence"""
+        engine = TicTacToeEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        # Create a board with symbols but no winning line (alternating X and O)
+        # Row 0: X O X
+        state = engine.apply_move(state, 1, {"row": 0, "col": 0})  # X
+        state = engine.apply_move(state, 2, {"row": 0, "col": 1})  # O
+        state = engine.apply_move(state, 1, {"row": 0, "col": 2})  # X
+        state = engine.apply_move(state, 2, {"row": 1, "col": 0})  # O
+        
+        result, winner = engine.check_game_result(state)
+        
+        # No winner yet - alternating symbols
+        assert result == GameResult.IN_PROGRESS
+        assert winner is None

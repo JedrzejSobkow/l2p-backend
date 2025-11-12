@@ -153,24 +153,29 @@ uvicorn main:app --reload
 
 The project uses pytest for testing.
 
-**Run all tests:**
+**Run all tests with coverage (recommended):**
 
 ```bash
 cd app
-python -m pytest tests/ -v
+python3 -m pytest -q --cov=services --cov-report=term-missing
 ```
 
-**Run tests with coverage report:**
+This command provides:
+- `-q`: Quiet mode - shows only test file progress (dots)
+- `--cov=services`: Measures coverage for services directory
+- `--cov-report=term-missing`: Shows which lines are not covered
+
+**Run all tests with verbose output:**
 
 ```bash
-python -m pytest tests/ -v --cov=services --cov-report=term-missing
+python3 -m pytest tests/ -v
 ```
 
 **Run specific test file:**
 
 ```bash
-python -m pytest tests/test_friendship_service.py -v
-python -m pytest tests/test_chat_service.py -v
+python3 -m pytest tests/test_friendship_service.py -v
+python3 -m pytest tests/test_chat_service.py -v
 ```
 
 ### Installing Test Dependencies

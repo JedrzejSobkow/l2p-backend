@@ -64,12 +64,16 @@ class LobbyNamespace(AuthNamespace):
                 if lobby:
                     lobby_response = LobbyResponse(
                         lobby_code=lobby["lobby_code"],
+                        name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                         host_id=lobby["host_id"],
                         max_players=lobby["max_players"],
                         current_players=lobby["current_players"],
                         is_public=lobby.get("is_public", False),
                         members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                        created_at=lobby["created_at"]
+                        created_at=lobby["created_at"],
+                        selected_game=lobby.get("selected_game"),
+                        selected_game_info=lobby.get("selected_game_info"),
+                        game_rules=lobby.get("game_rules", {})
                     )
                     await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
                     logger.info(f"User {user.id} rejoined lobby {lobby_code}")
@@ -136,8 +140,11 @@ class LobbyNamespace(AuthNamespace):
                 host_id=user_id,
                 host_nickname=user_nickname,
                 host_pfp_path=user.pfp_path if user else None,
+                name=request.name,
                 max_players=request.max_players,
-                is_public=request.is_public
+                is_public=request.is_public,
+                game_name=request.game_name,
+                game_rules=request.game_rules
             )
             
             # Join Socket.IO room
@@ -150,16 +157,35 @@ class LobbyNamespace(AuthNamespace):
             # Send full lobby state
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
+                name=lobby["name"],
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                created_at=lobby["created_at"]
+                created_at=lobby["created_at"],
+                selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
+                game_rules=lobby.get("game_rules", {})
             )
             await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
             
-            logger.info(f"User {user_id} created lobby {lobby['lobby_code']}")
+            # If a game was pre-selected, broadcast game_selected event
+            if request.game_name:
+                from services.game_service import GameService
+                engine_class = GameService.GAME_ENGINES[request.game_name]
+                game_info = engine_class.get_game_info()
+                
+                from schemas.lobby_schema import GameSelectedEvent
+                game_event = GameSelectedEvent(
+                    game_name=request.game_name,
+                    game_info=game_info.model_dump(),
+                    current_rules=lobby.get("game_rules", {})
+                )
+                await self.emit('game_selected', game_event.model_dump(mode='json'), room=sid)
+            
+            logger.info(f"User {user_id} created lobby '{lobby['name']}' ({lobby['lobby_code']})" +
+                       (f" with game {request.game_name}" if request.game_name else ""))
             
         except BadRequestException as e:
             error_response = LobbyErrorResponse(
@@ -237,12 +263,16 @@ class LobbyNamespace(AuthNamespace):
             # Send response to joiner
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
+                name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                created_at=lobby["created_at"]
+                created_at=lobby["created_at"],
+                selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
+                game_rules=lobby.get("game_rules", {})
             )
             response = LobbyJoinedResponse(lobby=lobby_response)
             await self.emit('lobby_joined', response.model_dump(mode='json'), room=sid)
@@ -404,12 +434,14 @@ class LobbyNamespace(AuthNamespace):
                 redis=redis,
                 lobby_code=lobby_code,
                 user_id=user_id,
+                name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
             )
             
             # Notify all members
             settings_updated_event = LobbySettingsUpdatedEvent(
+                name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
             )
@@ -547,12 +579,16 @@ class LobbyNamespace(AuthNamespace):
             # Send lobby state
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
+                name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                 host_id=lobby["host_id"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
                 members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                created_at=lobby["created_at"]
+                created_at=lobby["created_at"],
+                selected_game=lobby.get("selected_game"),
+                selected_game_info=lobby.get("selected_game_info"),
+                game_rules=lobby.get("game_rules", {})
             )
             await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
             
@@ -566,9 +602,9 @@ class LobbyNamespace(AuthNamespace):
     
     async def on_get_public_lobbies(self, sid, data):
         """
-        Get all public lobbies
+        Get all public lobbies, optionally filtered by game
         
-        Expected data: {} (no parameters needed)
+        Expected data: {"game_name": str (optional)}
         """
         try:
             user_id = manager.get_user_id(sid)
@@ -580,20 +616,27 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            # Get all public lobbies
+            # Extract optional game_name filter
+            game_name = data.get("game_name") if data else None
+            
+            # Get all public lobbies (optionally filtered by game)
             redis = get_redis()
-            lobbies = await LobbyService.get_all_public_lobbies(redis)
+            lobbies = await LobbyService.get_all_public_lobbies(redis, game_name=game_name)
             
             # Convert to response format
             lobbies_response = [
                 LobbyResponse(
                     lobby_code=lobby["lobby_code"],
+                    name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
                     host_id=lobby["host_id"],
                     max_players=lobby["max_players"],
                     current_players=lobby["current_players"],
                     is_public=lobby.get("is_public", False),
                     members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                    created_at=lobby["created_at"]
+                    created_at=lobby["created_at"],
+                    selected_game=lobby.get("selected_game"),
+                    selected_game_info=lobby.get("selected_game_info"),
+                    game_rules=lobby.get("game_rules", {})
                 )
                 for lobby in lobbies
             ]
@@ -954,6 +997,221 @@ class LobbyNamespace(AuthNamespace):
             logger.error(f"Error getting lobby messages: {str(e)}")
             error_response = LobbyErrorResponse(
                 message='Failed to get messages',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+
+    async def on_select_game(self, sid, data):
+        """
+        Select a game for the lobby (host only)
+        
+        Expected data: {"lobby_code": str, "game_name": str}
+        """
+        try:
+            # Validate input
+            try:
+                from schemas.lobby_schema import SelectGameRequest
+                request = SelectGameRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Select game
+            redis = get_redis()
+            result = await LobbyService.select_game(
+                redis=redis,
+                lobby_code=request.lobby_code,
+                host_id=user_id,
+                game_name=request.game_name
+            )
+            
+            # Broadcast game selected event to all lobby members
+            from schemas.lobby_schema import GameSelectedEvent
+            event = GameSelectedEvent(
+                game_name=request.game_name,
+                game_info=result["game_info"],
+                current_rules=result["current_rules"]
+            )
+            await self.emit('game_selected', event.model_dump(mode='json'), room=request.lobby_code)
+            
+            logger.info(f"User {user_id} selected game '{request.game_name}' for lobby {request.lobby_code}")
+            
+        except (NotFoundException, ForbiddenException, BadRequestException) as e:
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=type(e).__name__.upper(),
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+        except Exception as e:
+            logger.error(f"Error selecting game: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to select game',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+
+    async def on_update_game_rules(self, sid, data):
+        """
+        Update game rules in the lobby (host only)
+        
+        Expected data: {"lobby_code": str, "rules": dict}
+        """
+        try:
+            # Validate input
+            try:
+                from schemas.lobby_schema import UpdateGameRulesRequest
+                request = UpdateGameRulesRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Update rules
+            redis = get_redis()
+            result = await LobbyService.update_game_rules(
+                redis=redis,
+                lobby_code=request.lobby_code,
+                host_id=user_id,
+                rules=request.rules
+            )
+            
+            # Broadcast rules updated event to all lobby members
+            from schemas.lobby_schema import GameRulesUpdatedEvent
+            event = GameRulesUpdatedEvent(rules=result["rules"])
+            await self.emit('game_rules_updated', event.model_dump(mode='json'), room=request.lobby_code)
+            
+            logger.info(f"User {user_id} updated game rules for lobby {request.lobby_code}")
+            
+        except (NotFoundException, ForbiddenException, BadRequestException) as e:
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=type(e).__name__.upper(),
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+        except Exception as e:
+            logger.error(f"Error updating game rules: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to update game rules',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+
+    async def on_clear_game_selection(self, sid, data):
+        """
+        Clear game selection (host only)
+        
+        Expected data: {"lobby_code": str}
+        """
+        try:
+            # Validate input
+            try:
+                from schemas.lobby_schema import ClearGameSelectionRequest
+                request = ClearGameSelectionRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Clear game selection
+            redis = get_redis()
+            await LobbyService.clear_game_selection(
+                redis=redis,
+                lobby_code=request.lobby_code,
+                host_id=user_id
+            )
+            
+            # Broadcast event to all lobby members
+            from schemas.lobby_schema import GameSelectionClearedEvent
+            event = GameSelectionClearedEvent()
+            await self.emit('game_selection_cleared', event.model_dump(mode='json'), room=request.lobby_code)
+            
+            logger.info(f"User {user_id} cleared game selection for lobby {request.lobby_code}")
+            
+        except (NotFoundException, ForbiddenException, BadRequestException) as e:
+            error_response = LobbyErrorResponse(
+                message=e.message,
+                error_code=type(e).__name__.upper(),
+                details=e.details if hasattr(e, 'details') else None
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+        except Exception as e:
+            logger.error(f"Error clearing game selection: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to clear game selection',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+
+    async def on_get_available_games(self, sid, data):
+        """
+        Get list of available games with their info
+        
+        Expected data: {} (no parameters needed)
+        """
+        try:
+            from services.game_service import GameService
+            
+            # Get all available games
+            games_info = []
+            for game_name in GameService.get_available_games():
+                engine_class = GameService.GAME_ENGINES[game_name]
+                game_info = engine_class.get_game_info()
+                games_info.append(game_info.model_dump())
+            
+            # Send response
+            await self.emit('available_games', {
+                'games': games_info,
+                'total': len(games_info)
+            }, room=sid)
+            
+            logger.info(f"Sent available games list to user")
+            
+        except Exception as e:
+            logger.error(f"Error getting available games: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to get available games',
                 error_code='INTERNAL_ERROR'
             )
             await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)

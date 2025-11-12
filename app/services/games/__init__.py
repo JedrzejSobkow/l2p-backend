@@ -6,6 +6,7 @@ from services.game_engine_interface import GameEngineInterface
 
 # Import all game engines here (they will be auto-discovered)
 from services.games.tictactoe_engine import TicTacToeEngine
+from services.games.clobber_engine import ClobberEngine
 
 # Automatically discover all GameEngineInterface subclasses in this module
 def _discover_game_engines() -> Dict[str, Type[GameEngineInterface]]:
@@ -32,4 +33,4 @@ def _discover_game_engines() -> Dict[str, Type[GameEngineInterface]]:
 # Build the registry automatically
 GAME_ENGINES: Dict[str, Type[GameEngineInterface]] = _discover_game_engines()
 
-__all__ = ["TicTacToeEngine", "GAME_ENGINES"]
+__all__ = ["TicTacToeEngine", "ClobberEngine", "GAME_ENGINES"]

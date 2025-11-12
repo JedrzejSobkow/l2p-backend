@@ -1,16 +1,20 @@
 # app/schemas/lobby_schema.py
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
+from schemas.game_schema import GameInfo
 
 
 # ================ Request Models (HTTP & WebSocket) ================
 
 class CreateLobbyRequest(BaseModel):
     """Request to create a new lobby"""
+    name: Optional[str] = Field(None, max_length=50, description="Optional: Custom lobby name (defaults to 'Game: {lobby_code}')")
     max_players: int = Field(default=6, ge=2, le=6, description="Maximum number of players (2-6)")
     is_public: bool = Field(default=False, description="Whether the lobby is public or private")
+    game_name: Optional[str] = Field(None, description="Optional: Pre-select a game when creating lobby")
+    game_rules: Optional[Dict[str, Any]] = Field(None, description="Optional: Initial game rules (requires game_name)")
 
 
 class JoinLobbyRequest(BaseModel):
@@ -27,6 +31,7 @@ class JoinLobbyRequest(BaseModel):
 
 class UpdateLobbySettingsRequest(BaseModel):
     """Request to update lobby settings (only host can do this)"""
+    name: Optional[str] = Field(None, min_length=1, max_length=50, description="New lobby name (must be unique)")
     max_players: Optional[int] = Field(None, ge=2, le=6, description="Maximum number of players (2-6)")
     is_public: Optional[bool] = Field(None, description="Whether the lobby is public or private")
 
@@ -76,6 +81,44 @@ class LobbyTypingIndicatorRequest(BaseModel):
         return v.upper()
 
 
+class SelectGameRequest(BaseModel):
+    """Request to select a game for the lobby"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    game_name: str = Field(..., description="Name of the game to select")
+    
+    @field_validator('lobby_code')
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
+class UpdateGameRulesRequest(BaseModel):
+    """Request to update game rules in the lobby"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    rules: Dict[str, Any] = Field(..., description="Game rules to update")
+    
+    @field_validator('lobby_code')
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
+class ClearGameSelectionRequest(BaseModel):
+    """Request to clear game selection (allows selecting a different game)"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    
+    @field_validator('lobby_code')
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
 # ================ Response Models ================
 
 class LobbyMemberResponse(BaseModel):
@@ -96,12 +139,16 @@ class LobbyMemberResponse(BaseModel):
 class LobbyResponse(BaseModel):
     """Complete lobby information"""
     lobby_code: str
+    name: str
     host_id: int
     max_players: int
     current_players: int
     is_public: bool
     members: List[LobbyMemberResponse]
     created_at: datetime
+    selected_game: Optional[str] = None
+    selected_game_info: Optional[GameInfo] = None
+    game_rules: Dict[str, Any] = Field(default_factory=dict)
     
     class Config:
         json_encoders = {
@@ -153,6 +200,7 @@ class LobbyHostTransferredEvent(BaseModel):
 
 class LobbySettingsUpdatedEvent(BaseModel):
     """Event emitted when lobby settings are updated"""
+    name: Optional[str] = None
     max_players: Optional[int] = None
     is_public: Optional[bool] = None
     message: str = "Lobby settings updated"
@@ -211,3 +259,22 @@ class LobbyUserTypingResponse(BaseModel):
     """Event emitted when user is typing in lobby chat"""
     user_id: int
     nickname: str
+
+
+class GameSelectedEvent(BaseModel):
+    """Event emitted when a game is selected in lobby"""
+    game_name: str
+    game_info: Dict[str, Any] = Field(..., description="GameInfo for the selected game")
+    current_rules: Dict[str, Any] = Field(default_factory=dict, description="Current game rules")
+    message: str = "Game selected"
+
+
+class GameRulesUpdatedEvent(BaseModel):
+    """Event emitted when game rules are updated"""
+    rules: Dict[str, Any]
+    message: str = "Game rules updated"
+
+
+class GameSelectionClearedEvent(BaseModel):
+    """Event emitted when game selection is cleared"""
+    message: str = "Game selection cleared"
