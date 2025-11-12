@@ -600,6 +600,62 @@ class LobbyNamespace(AuthNamespace):
             )
             await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
     
+    async def on_get_lobby_game_info(self, sid, data):
+        """
+        Get game information for a lobby by code
+        Returns: game_name and display_name
+        
+        Expected data: {"lobby_code": str}
+        """
+        try:
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Extract lobby_code
+            lobby_code = data.get('lobby_code')
+            if not lobby_code:
+                error_response = LobbyErrorResponse(
+                    message='Missing lobby_code',
+                    error_code='VALIDATION_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Get lobby
+            redis = get_redis()
+            lobby = await LobbyService.get_lobby(redis, lobby_code.upper())
+            
+            if not lobby:
+                error_response = LobbyErrorResponse(
+                    message='Lobby not found',
+                    error_code='NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Return only game info
+            game_info_response = {
+                "lobby_code": lobby_code.upper(),
+                "game_name": lobby.get("selected_game"),
+                "game_display_name": lobby.get("selected_game_info").display_name if lobby.get("selected_game_info") else None
+            }
+            
+            await self.emit('lobby_game_info', game_info_response, room=sid)
+            
+        except Exception as e:
+            logger.error(f"Error getting lobby game info: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to get lobby game info',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+    
     async def on_get_public_lobbies(self, sid, data):
         """
         Get all public lobbies, optionally filtered by game
