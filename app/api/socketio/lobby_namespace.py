@@ -1100,7 +1100,8 @@ class LobbyNamespace(AuthNamespace):
             event = GameSelectedEvent(
                 game_name=request.game_name,
                 game_info=result["game_info"],
-                current_rules=result["current_rules"]
+                current_rules=result["current_rules"],
+                max_players=result["lobby"]["max_players"]
             )
             await self.emit('game_selected', event.model_dump(mode='json'), room=request.lobby_code)
             
@@ -1220,7 +1221,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Broadcast event to all lobby members
             from schemas.lobby_schema import GameSelectionClearedEvent
-            event = GameSelectionClearedEvent()
+            event = GameSelectionClearedEvent(max_players=6)
             await self.emit('game_selection_cleared', event.model_dump(mode='json'), room=request.lobby_code)
             
             logger.info(f"User {user_id} cleared game selection for lobby {request.lobby_code}")

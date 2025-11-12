@@ -102,7 +102,7 @@ class LobbyService:
                 details={"max_players": "Must be between 2 and 6"}
             )
         
-        # Validate game_name if provided
+        # Validate game_name if provided and adjust max_players
         if game_name:
             from services.game_service import GameService
             if game_name not in GameService.GAME_ENGINES:
@@ -116,6 +116,10 @@ class LobbyService:
             
             engine_class = GameService.GAME_ENGINES[game_name]
             game_info = engine_class.get_game_info()
+            
+            # Set max_players to the minimum supported by the game if game is selected
+            # (when creating, there's only 1 player - the host)
+            max_players = game_info.min_players
             
             # If game_name provided without rules, use defaults
             if game_rules is None:
@@ -1294,7 +1298,7 @@ class LobbyService:
         Raises:
             NotFoundException: If lobby not found
             ForbiddenException: If user is not the host
-            BadRequestException: If game name is invalid
+            BadRequestException: If game name is invalid or too many players for the game
         """
         # Get lobby
         lobby = await LobbyService.get_lobby(redis, lobby_code)
@@ -1330,11 +1334,35 @@ class LobbyService:
             for rule_name, rule_config in game_info.supported_rules.items()
         }
         
+        # Get current player count
+        current_player_count = lobby["current_players"]
+        
+        # Calculate the smallest allowed player count >= current player count
+        # Game supports min_players to max_players
+        # We need to find the smallest valid count that accommodates current players
+        min_allowed = game_info.min_players
+        max_allowed = game_info.max_players
+        
+        # If current players exceed the game's maximum, we cannot select this game
+        if current_player_count > max_allowed:
+            raise BadRequestException(
+                message=f"Too many players in lobby for this game. Maximum allowed: {max_allowed}",
+                details={
+                    "current_players": current_player_count,
+                    "game_max_players": max_allowed,
+                    "game_name": game_name
+                }
+            )
+        
+        # Find the smallest player count >= current_player_count within [min_allowed, max_allowed]
+        new_max_players = max(min_allowed, current_player_count)
+        
         # Update lobby data
         lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
         lobby_data = json.loads(lobby_data_raw)
         lobby_data["selected_game"] = game_name
         lobby_data["game_rules"] = default_rules
+        lobby_data["max_players"] = new_max_players
         
         # Save to Redis
         await redis.set(
@@ -1343,7 +1371,7 @@ class LobbyService:
             ex=LobbyService.LOBBY_TTL
         )
         
-        logger.info(f"Game '{game_name}' selected for lobby {lobby_code}")
+        logger.info(f"Game '{game_name}' selected for lobby {lobby_code}, max_players set to {new_max_players}")
         
         return {
             "lobby": lobby_data,
@@ -1479,6 +1507,7 @@ class LobbyService:
     ) -> Dict[str, Any]:
         """
         Clear game selection (allows selecting a different game)
+        Sets max_players to 6 when clearing.
         
         Args:
             redis: Redis client
@@ -1512,6 +1541,7 @@ class LobbyService:
         lobby_data = json.loads(lobby_data_raw)
         lobby_data["selected_game"] = None
         lobby_data["game_rules"] = {}
+        lobby_data["max_players"] = 6  # Set to default max when clearing game
         
         # Save to Redis
         await redis.set(
@@ -1520,7 +1550,7 @@ class LobbyService:
             ex=LobbyService.LOBBY_TTL
         )
         
-        logger.info(f"Game selection cleared for lobby {lobby_code}")
+        logger.info(f"Game selection cleared for lobby {lobby_code}, max_players set to 6")
         
         return {
             "lobby_code": lobby_code,
