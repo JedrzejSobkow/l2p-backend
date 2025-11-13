@@ -13,7 +13,7 @@ class TestLobbyWebSocketGameInfo:
         # Create lobby with game
         lobby = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:1",
+            host_id=1,
             host_nickname="TestHost",
             host_pfp_path=None,
             max_players=4,
@@ -42,7 +42,7 @@ class TestLobbyWebSocketGameInfo:
         # Create lobby with clobber game
         lobby = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:2",
+            host_id=2,
             host_nickname="ClobberHost",
             host_pfp_path=None,
             max_players=2,
@@ -71,7 +71,7 @@ class TestLobbyWebSocketGameInfo:
         # Create lobby without game
         lobby = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:3",
+            host_id=3,
             host_nickname="NoGameHost",
             host_pfp_path=None,
             max_players=6,

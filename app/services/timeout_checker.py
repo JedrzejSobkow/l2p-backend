@@ -89,6 +89,15 @@ class TimeoutChecker:
             
             game_state = json.loads(state_raw)
             
+            # Load engine config to get identifiers
+            config_raw = await self.redis.get(GameService._game_engine_key(lobby_code))
+            if not config_raw:
+                logger.warning(f"Engine config not found for lobby {lobby_code}")
+                return
+            
+            engine_config = json.loads(config_raw)
+            identifiers = engine_config.get("identifiers", [])
+            
             # Skip if game is already ended
             if game_state.get("result") != "in_progress":
                 logger.info(f"Game in lobby {lobby_code} already ended")
@@ -105,7 +114,7 @@ class TimeoutChecker:
                     
                     # Update game state
                     game_state["result"] = GameResult.TIMEOUT.value
-                    game_state["winner_id"] = winner_id
+                    game_state["winner_identifier"] = winner_id
                     
                     # Save to Redis
                     await self.redis.set(
@@ -121,7 +130,7 @@ class TimeoutChecker:
                     end_event = GameEndedEvent(
                         lobby_code=lobby_code,
                         result=GameResult.TIMEOUT.value,
-                        winner_id=winner_id,
+                        winner_identifier=winner_id,
                         game_state=game_state
                     )
                     
@@ -141,7 +150,8 @@ class TimeoutChecker:
                     # Consume time and advance turn
                     game_state = engine.consume_turn_time(game_state)
                     engine.advance_turn()
-                    game_state["current_turn_player_id"] = engine.current_player_id
+                    # Update current turn player in state
+                    game_state["current_turn_player_identifier"] = identifiers[engine.current_turn_index]
                     game_state = engine.start_turn(game_state)
                     
                     # Save updated state
@@ -159,10 +169,10 @@ class TimeoutChecker:
                     from schemas.game_schema import MoveMadeEvent
                     skip_event = MoveMadeEvent(
                         lobby_code=lobby_code,
-                        player_id=engine.player_ids[engine.current_turn_index - 1],  # Previous player who timed out
+                        identifier=identifiers[engine.current_turn_index - 1],  # Previous player who timed out
                         move_data={"skipped": True, "reason": "timeout"},
                         game_state=game_state,
-                        current_turn_player_id=engine.current_player_id
+                        current_turn_identifier=game_state["current_turn_player_identifier"]
                     )
                     
                     await self.sio.emit(
