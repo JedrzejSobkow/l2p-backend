@@ -1023,6 +1023,9 @@ class LobbyService:
             redis: Redis client
             lobby_code: 6-character lobby code
         """
+        # Import here to avoid circular dependency
+        from services.game_service import GameService
+        
         # Get lobby data to retrieve the name
         lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
         lobby_name = None
@@ -1051,6 +1054,9 @@ class LobbyService:
                 pipe.delete(LobbyService._user_lobby_key(member["user_id"]))
             
             await pipe.execute()
+        
+        # Delete associated game if it exists
+        await GameService.delete_game(redis, lobby_code)
         
         logger.info(f"Lobby {lobby_code} closed and cleaned up")
     
