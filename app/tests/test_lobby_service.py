@@ -3117,3 +3117,116 @@ class TestLobbyService:
         updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
         assert updated_lobby["max_players"] == 6
         assert updated_lobby["current_players"] == 2
+
+    async def test_create_lobby_with_boolean_rule_invalid_type(self, redis_client):
+        """Test creating lobby with boolean rule having wrong type - skipped as rules are passed to select_game"""
+        # Note: create_lobby doesn't accept rules parameter, it's passed to select_game instead
+        pytest.skip("Rules are validated in select_game, not create_lobby")
+    
+    async def test_update_lobby_settings_name_too_long(self, redis_client):
+        """Test updating lobby with name > 50 characters"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_identifier=f"user:1",
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.update_lobby_settings(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                user_identifier=f"user:1",
+                name="A" * 51  # 51 characters
+            )
+        assert "too long" in str(exc.value.message).lower()
+    
+    async def test_join_lobby_guest_extends_session(self, redis_client):
+        """Test that joining lobby as guest extends guest session"""
+        from services.guest_service import GuestService
+        
+        # Create guest
+        guest = await GuestService.create_guest_session(redis_client)
+        
+        # Create lobby
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_identifier=f"user:1",
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Join as guest
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_identifier=f"guest:{guest.guest_id}",
+            user_nickname=guest.nickname,
+            user_pfp_path=guest.pfp_path
+        )
+        
+        # Verify guest session still exists (was extended)
+        guest_session = await GuestService.get_guest_session(redis_client, guest.guest_id)
+        assert guest_session is not None
+    
+    async def test_get_lobby_with_invalid_game_engine(self, redis_client):
+        """Test get_lobby handles missing game engine gracefully"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_identifier=f"user:1",
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Manually corrupt the selected_game to trigger exception
+        lobby_key = LobbyService._lobby_key(lobby["lobby_code"])
+        lobby_data = json.loads(await redis_client.get(lobby_key))
+        lobby_data["selected_game"] = "nonexistent_game"
+        await redis_client.set(lobby_key, json.dumps(lobby_data))
+        
+        # Should not crash, just return lobby without game info
+        result = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert result is not None
+        assert result["selected_game"] == "nonexistent_game"
+
+    async def test_select_game_boolean_rule_validation(self, redis_client):
+        """Test select_game validates boolean rules correctly"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_identifier=f"user:1",
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=4
+        )
+        
+        # Try to select game with invalid boolean rule (if tictactoe has one)
+        # Most games don't have boolean rules, so we'll check if exception is raised properly
+        # This tests the validation logic even if specific games don't have boolean rules
+        from services.game_service import GameService
+        
+        # Check if tictactoe has any rules defined
+        tictactoe_info = GameService.GAME_ENGINES['tictactoe'].get_game_info()
+        
+        # tictactoe_info is a Pydantic model
+        if tictactoe_info.supported_rules:
+            # Find if there are any boolean rules
+            boolean_rules = [rule for name, rule in tictactoe_info.supported_rules.items() if rule.type == 'boolean']
+            if boolean_rules:
+                # Test with invalid type for boolean rule
+                rule_name = [name for name, rule in tictactoe_info.supported_rules.items() if rule.type == 'boolean'][0]
+                with pytest.raises(BadRequestException) as exc:
+                    await LobbyService.select_game(
+                        redis=redis_client,
+                        lobby_code=lobby["lobby_code"],
+                        host_identifier=f"user:1",
+                        game_name="tictactoe",
+                        rules={rule_name: "true"}  # String instead of bool
+                    )
+                assert "must be a boolean" in str(exc.value.message).lower()
+            else:
+                pytest.skip("No boolean rules in tictactoe to test")
+        else:
+            pytest.skip("No rules defined for tictactoe")

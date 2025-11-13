@@ -345,3 +345,25 @@ class TestTicTacToeEngine:
         # No winner yet - alternating symbols
         assert result == GameResult.IN_PROGRESS
         assert winner is None
+
+    def test_check_line_short_line(self):
+        """Test that _check_line handles lines shorter than win_length gracefully (line 172)"""
+        # The edge case at line 172 handles when len(line) < win_length
+        # This prevents index errors when checking partial lines
+        engine = TicTacToeEngine(
+            lobby_code="EDGE",
+            player_ids=[1, 2],
+            rules={"board_size": 3, "win_length": 3}
+        )
+        
+        # Test with a line that's too short to win
+        short_line = ["X", "X"]  # Length 2, but win_length is 3
+        result = engine._check_line(short_line)
+        
+        # Should return None (can't win with a line shorter than win_length)
+        assert result is None
+        
+        # Test with empty line
+        empty_line = []
+        result = engine._check_line(empty_line)
+        assert result is None
