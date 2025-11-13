@@ -891,18 +891,18 @@ class LobbyService:
         }
     
     @staticmethod
-    async def get_user_lobby(redis: Redis, user_id: int) -> Optional[str]:
+    async def get_user_lobby(redis: Redis, user_identifier: str) -> Optional[str]:
         """
         Get the lobby code a user is currently in
         
         Args:
             redis: Redis client
-            user_id: User ID
+            user_identifier: User identifier (user:id or guest:uuid)
             
         Returns:
             Lobby code or None
         """
-        lobby_code = await redis.get(LobbyService._user_lobby_key(user_id))
+        lobby_code = await redis.get(LobbyService._user_lobby_key(user_identifier))
         if lobby_code:
             return lobby_code.decode() if isinstance(lobby_code, bytes) else lobby_code
         return None
@@ -1510,7 +1510,7 @@ class LobbyService:
     async def clear_game_selection(
         redis: Redis,
         lobby_code: str,
-        host_id: int
+        host_identifier: str
     ) -> Dict[str, Any]:
         """
         Clear game selection (allows selecting a different game)
@@ -1519,7 +1519,7 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            host_id: User ID of the host (for authorization)
+            host_identifier: Identifier of the host (for authorization)
             
         Returns:
             Dictionary with updated lobby info
@@ -1537,10 +1537,10 @@ class LobbyService:
             )
         
         # Check if user is host
-        if lobby["host_id"] != host_id:
+        if lobby["host_identifier"] != host_identifier:
             raise ForbiddenException(
                 message="Only the host can clear game selection",
-                details={"host_id": lobby["host_id"]}
+                details={"host_identifier": lobby["host_identifier"]}
             )
         
         # Update lobby data

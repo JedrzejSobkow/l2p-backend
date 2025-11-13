@@ -14,7 +14,7 @@ class TestLobbyAPIGameInfo:
         # Create lobby with game directly via service (simulates API call)
         lobby = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:1",
+            host_id=1,
             host_nickname="TestHost",
             host_pfp_path=None,
             name="API Test Lobby",
@@ -46,7 +46,7 @@ class TestLobbyAPIGameInfo:
         # Create lobby without game
         lobby = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:2",
+            host_id=2,
             host_nickname="TestHost2",
             host_pfp_path=None,
             name="API Test No Game",
@@ -69,7 +69,7 @@ class TestLobbyAPIGameInfo:
         # Create public lobby with tictactoe
         lobby1 = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:10",
+            host_id=10,
             host_nickname="Host1",
             host_pfp_path=None,
             max_players=4,
@@ -80,7 +80,7 @@ class TestLobbyAPIGameInfo:
         # Create public lobby with clobber
         lobby2 = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:11",
+            host_id=11,
             host_nickname="Host2",
             host_pfp_path=None,
             max_players=2,
@@ -91,7 +91,7 @@ class TestLobbyAPIGameInfo:
         # Create public lobby without game
         lobby3 = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:12",
+            host_id=12,
             host_nickname="Host3",
             host_pfp_path=None,
             max_players=6,
@@ -123,7 +123,7 @@ class TestLobbyAPIGameInfo:
         # Create public lobbies with different games
         lobby_ttt = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:20",
+            host_id=20,
             host_nickname="TTTHost",
             host_pfp_path=None,
             max_players=4,
@@ -133,7 +133,7 @@ class TestLobbyAPIGameInfo:
         
         lobby_clobber = await LobbyService.create_lobby(
             redis=redis_client,
-            host_identifier=f"user:21",
+            host_id=21,
             host_nickname="ClobberHost",
             host_pfp_path=None,
             max_players=2,
