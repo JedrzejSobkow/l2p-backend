@@ -726,3 +726,45 @@ class TestTimeoutChecker:
                     # Cleanup should still happen
                     mock_pubsub.unsubscribe.assert_called_once()
                     mock_pubsub.close.assert_called_once()
+
+    async def test_handle_timeout_missing_game_engine(self, redis_client):
+        """Test early return in _handle_timeout when engine is not found (line 87-88)"""
+        from unittest.mock import AsyncMock, patch
+        
+        sio_mock = AsyncMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        lobby_code = "NO_ENGINE"
+        
+        # Mock _load_engine to return None
+        with patch.object(GameService, '_load_engine', new_callable=AsyncMock) as mock_load:
+            mock_load.return_value = None  # Engine not found
+            
+            # Should return early without error
+            await checker._handle_timeout(lobby_code)
+            
+            # Should not try to emit any events
+            sio_mock.emit.assert_not_called()
+
+    async def test_handle_timeout_missing_game_state(self, redis_client):
+        """Test early return in _handle_timeout when game state is not found (line 95-96)"""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        
+        sio_mock = AsyncMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        lobby_code = "NO_STATE"
+        
+        # Mock _load_engine to return a valid engine
+        mock_engine = MagicMock()
+        
+        with patch.object(GameService, '_load_engine', new_callable=AsyncMock) as mock_load:
+            mock_load.return_value = mock_engine
+            
+            # Don't set any game state in Redis (state_raw will be None at line 92)
+            
+            # Should return early without error
+            await checker._handle_timeout(lobby_code)
+            
+            # Should not try to emit any events
+            sio_mock.emit.assert_not_called()

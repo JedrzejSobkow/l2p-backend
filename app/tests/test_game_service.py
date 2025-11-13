@@ -811,3 +811,54 @@ class TestGameService:
         
         assert isinstance(games, list)
         assert "tictactoe" in games
+
+@pytest.mark.asyncio
+async def test_create_game_extends_guest_session(redis_client):
+    """Test that create_game extends guest session TTL for guests"""
+    from unittest.mock import AsyncMock, patch
+    from services.guest_service import GuestService
+    
+    test_guest_identifier = "guest:abc123"
+    
+    # Mock GuestService.extend_guest_session
+    with patch.object(GuestService, 'extend_guest_session', new_callable=AsyncMock) as mock_extend:
+        # Create game with a guest player
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="GUEST1",
+            game_name="tictactoe",
+            identifiers=[test_guest_identifier, "user:456"]
+        )
+        
+        # Should extend guest session (with just the ID part, not the prefix)
+        mock_extend.assert_called_once_with(redis_client, "abc123")
+
+
+@pytest.mark.asyncio
+async def test_make_move_extends_guest_session(redis_client):
+    """Test that make_move extends guest session TTL for guests"""
+    from unittest.mock import AsyncMock, patch
+    from services.guest_service import GuestService
+    
+    test_guest_identifier = "guest:abc123"
+    
+    # Create a game with guest
+    await GameService.create_game(
+        redis=redis_client,
+        lobby_code="GUEST2",
+        game_name="tictactoe",
+        identifiers=[test_guest_identifier, "user:456"]
+    )
+    
+    # Mock GuestService.extend_guest_session
+    with patch.object(GuestService, 'extend_guest_session', new_callable=AsyncMock) as mock_extend:
+        # Make move as guest
+        await GameService.make_move(
+            redis=redis_client,
+            lobby_code="GUEST2",
+            identifier=test_guest_identifier,
+            move_data={"row": 0, "col": 0}
+        )
+        
+        # Should extend guest session (with just the ID part, not the prefix)
+        mock_extend.assert_called_once_with(redis_client, "abc123")

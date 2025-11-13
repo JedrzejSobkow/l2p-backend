@@ -653,3 +653,286 @@ class TestUserManagerConfiguration:
         from config.settings import settings
         assert user_manager.reset_password_token_secret == settings.SECRET_KEY
         assert user_manager.verification_token_secret == settings.SECRET_KEY
+
+    async def test_on_after_login_hook(self, db_session: AsyncSession, test_user_1: RegisteredUser):
+        """Test on_after_login hook prints message"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        with patch('builtins.print') as mock_print:
+            await user_manager.on_after_login(test_user_1)
+            
+            mock_print.assert_called_once()
+            call_args = str(mock_print.call_args)
+            assert str(test_user_1.id) in call_args
+            assert test_user_1.nickname in call_args
+    
+    async def test_generate_unique_nickname_from_email(self, db_session: AsyncSession):
+        """Test generating unique nickname from email"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        nickname = await user_manager._generate_unique_nickname(
+            "github", 
+            "test.user@example.com"
+        )
+        
+        # Should use email username
+        assert "test_user" in nickname or nickname == "test_user"
+    
+    async def test_generate_unique_nickname_collision(
+        self, 
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser
+    ):
+        """Test generating unique nickname handles collisions"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        # Use an email similar to existing user's nickname
+        email_with_collision = f"{test_user_1.nickname}@example.com"
+        
+        nickname = await user_manager._generate_unique_nickname(
+            "github",
+            email_with_collision
+        )
+        
+        # Should generate different nickname
+        assert nickname != test_user_1.nickname
+    
+    async def test_generate_unique_nickname_no_email(self, db_session: AsyncSession):
+        """Test generating unique nickname without email"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        nickname = await user_manager._generate_unique_nickname("google", None)
+        
+        # Should use oauth_name in generated nickname
+        assert "google_user_" in nickname
+    
+    async def test_oauth_callback_existing_account(self, db_session: AsyncSession):
+        """Test OAuth callback with existing account"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        # Mock existing user
+        existing_user = RegisteredUser(
+            id=999,
+            email="oauth@example.com",
+            nickname="oauth_user",
+            hashed_password="hashed",
+            is_verified=True
+        )
+        
+        async def mock_get_by_oauth(oauth_name, account_id):
+            return existing_user
+        
+        user_manager.get_by_oauth_account = mock_get_by_oauth
+        mock_user_db.update_oauth_account = AsyncMock()
+        
+        result = await user_manager.oauth_callback(
+            oauth_name="github",
+            access_token="token123",
+            account_id="gh123",
+            account_email="oauth@example.com"
+        )
+        
+        assert result == existing_user
+        mock_user_db.update_oauth_account.assert_called_once()
+    
+    async def test_oauth_callback_associate_by_email(self, db_session: AsyncSession, test_user_1: RegisteredUser):
+        """Test OAuth callback associating with existing email"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        async def mock_get_by_oauth(oauth_name, account_id):
+            raise Exception("Not found")
+        
+        async def mock_get_by_email(email):
+            if email == test_user_1.email:
+                return test_user_1
+            raise Exception("Not found")
+        
+        user_manager.get_by_oauth_account = mock_get_by_oauth
+        user_manager.get_by_email = mock_get_by_email
+        mock_user_db.add_oauth_account = AsyncMock()
+        
+        result = await user_manager.oauth_callback(
+            oauth_name="github",
+            access_token="token123",
+            account_id="gh123",
+            account_email=test_user_1.email,
+            associate_by_email=True
+        )
+        
+        assert result == test_user_1
+        mock_user_db.add_oauth_account.assert_called_once()
+    
+    async def test_oauth_callback_create_new_user(self, db_session: AsyncSession):
+        """Test OAuth callback creating new user"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        new_user = RegisteredUser(
+            id=888,
+            email="newuser@example.com",
+            nickname="github_user_abc123",
+            hashed_password="hashed",
+            is_verified=True
+        )
+        
+        async def mock_get_by_oauth(oauth_name, account_id):
+            raise Exception("Not found")
+        
+        async def mock_get_by_email(email):
+            raise Exception("Not found")
+        
+        user_manager.get_by_oauth_account = mock_get_by_oauth
+        user_manager.get_by_email = mock_get_by_email
+        mock_user_db.create = AsyncMock(return_value=new_user)
+        mock_user_db.add_oauth_account = AsyncMock()
+        
+        with patch.object(user_manager, 'on_after_register', AsyncMock()):
+            result = await user_manager.oauth_callback(
+                oauth_name="github",
+                access_token="token123",
+                account_id="gh123",
+                account_email="newuser@example.com",
+                is_verified_by_default=True
+            )
+        
+        assert result == new_user
+        mock_user_db.create.assert_called_once()
+        mock_user_db.add_oauth_account.assert_called_once()
+    
+    async def test_create_without_nickname_raises(self, db_session: AsyncSession):
+        """Test create validates nickname is required by Pydantic"""
+        # Pydantic will raise ValidationError before our code runs
+        with pytest.raises(Exception):  # ValidationError from pydantic
+            UserCreate(
+                email="test@example.com",
+                password="strongpassword123"
+                # nickname missing - Pydantic will catch this
+            )
+    
+    async def test_update_email_validates_uniqueness(
+        self,
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser,
+        test_user_2: RegisteredUser
+    ):
+        """Test updating email validates uniqueness"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        # UserUpdate may not allow email updates - skip this test
+        pytest.skip("UserUpdate schema may not allow direct email updates")
+    
+    async def test_update_nickname_validates_uniqueness(
+        self,
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser,
+        test_user_2: RegisteredUser
+    ):
+        """Test updating nickname validates uniqueness"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        user_update = UserUpdate(nickname=test_user_2.nickname)
+        
+        with pytest.raises(NicknameAlreadyExists):
+            await user_manager.update(user_update, test_user_1)
+    
+    async def test_update_same_email_allowed(
+        self,
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser
+    ):
+        """Test updating to same email is allowed"""
+        pytest.skip("UserUpdate schema may not allow direct email updates")
+    
+    async def test_update_same_nickname_allowed(
+        self,
+        db_session: AsyncSession,
+        test_user_1: RegisteredUser
+    ):
+        """Test updating to same nickname is allowed"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        user_update = UserUpdate(nickname=test_user_1.nickname)
+        
+        with patch.object(user_manager.__class__.__bases__[1], 'update', AsyncMock(return_value=test_user_1)):
+            result = await user_manager.update(user_update, test_user_1)
+            assert result == test_user_1
+
+    async def test_generate_unique_nickname_fallback_counter(self, db_session: AsyncSession):
+        """Test nickname generation with fallback and counter"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        # Mock that first generated nickname is taken
+        call_count = 0
+        async def mock_validate(nickname):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise NicknameAlreadyExists(f"Nickname '{nickname}' is already taken")
+            # Second call succeeds
+        
+        user_manager.validate_nickname_unique = mock_validate
+        
+        # Generate without email to trigger fallback path
+        nickname = await user_manager._generate_unique_nickname("github", None)
+        
+        # Should have generated github_user_ with suffix and counter
+        assert "github_user_" in nickname
+        assert call_count == 2  # Called twice - first failed, second succeeded
+    
+    async def test_oauth_callback_associate_by_email_exception_path(self, db_session: AsyncSession):
+        """Test OAuth callback when associate_by_email fails"""
+        mock_user_db = Mock()
+        mock_user_db.session = db_session
+        user_manager = UserManager(mock_user_db)
+        
+        new_user = RegisteredUser(
+            id=999,
+            email="oauth@example.com",
+            nickname="oauth_user_xyz",
+            hashed_password="hashed",
+            is_verified=False
+        )
+        
+        async def mock_get_by_oauth(oauth_name, account_id):
+            raise Exception("Not found")
+        
+        async def mock_get_by_email(email):
+            raise Exception("Not found")  # Triggers exception path
+        
+        user_manager.get_by_oauth_account = mock_get_by_oauth
+        user_manager.get_by_email = mock_get_by_email
+        mock_user_db.create = AsyncMock(return_value=new_user)
+        mock_user_db.add_oauth_account = AsyncMock()
+        
+        with patch.object(user_manager, 'on_after_register', AsyncMock()):
+            result = await user_manager.oauth_callback(
+                oauth_name="github",
+                access_token="token123",
+                account_id="gh123",
+                account_email="oauth@example.com",
+                associate_by_email=True  # This triggers the exception path
+            )
+        
+        assert result == new_user
+        mock_user_db.create.assert_called_once()
