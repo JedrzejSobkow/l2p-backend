@@ -19,7 +19,7 @@ class RegisteredUser(Base, SQLAlchemyBaseUserTable[int]):
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     
     # OAuth accounts relationship
-    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship("OAuthAccount", lazy="joined", cascade="all, delete-orphan")
+    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship("OAuthAccount", lazy="selectin", cascade="all, delete-orphan")
     
     # fastapi-users provides these fields automatically:
     # - id: int (primary key)
