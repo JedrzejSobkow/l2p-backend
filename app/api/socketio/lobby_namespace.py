@@ -760,7 +760,7 @@ class LobbyNamespace(AuthNamespace):
             )
             
             # Get kicked user's sid to force disconnect from lobby room
-            kicked_sid = manager.get_sid(request.user_id)
+            kicked_sid = manager.get_sid(request.user_id, namespace='/lobby')
             if kicked_sid:
                 await self.leave_room(kicked_sid, lobby_code)
                 # Notify kicked user
