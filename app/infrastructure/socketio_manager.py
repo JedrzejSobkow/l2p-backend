@@ -24,10 +24,12 @@ class ConnectionManager:
         self.sid_to_user: Dict[str, int] = {}
         # Maps session_id to user email (for reference)
         self.sid_to_email: Dict[str, str] = {}
+        # Maps session_id to namespace (IMPORTANT: to avoid sending chat messages via lobby namespace!)
+        self.sid_to_namespace: Dict[str, str] = {}
         # Maps user_id to nickname (cached for display purposes)
         self.user_to_nickname: Dict[int, str] = {}
     
-    def connect(self, sid: str, user_id: int, email: str, nickname: str = None):
+    def connect(self, sid: str, user_id: int, email: str, nickname: str = None, namespace: str = None):
         """Register a user's connection"""
         # Add sid to user's list of connections
         if user_id not in self.active_connections:
@@ -39,17 +41,22 @@ class ConnectionManager:
         self.sid_to_user[sid] = user_id
         self.sid_to_email[sid] = email
         
+        # Track which namespace this sid belongs to
+        if namespace:
+            self.sid_to_namespace[sid] = namespace
+        
         # Cache nickname if provided
         if nickname:
             self.user_to_nickname[user_id] = nickname
         
-        logger.info(f"User {user_id} ({email}) connected with session {sid}")
+        logger.info(f"User {user_id} ({email}) connected with session {sid} to namespace {namespace}")
     
     def disconnect(self, sid: str):
         """Unregister a user's connection"""
         if sid in self.sid_to_user:
             user_id = self.sid_to_user[sid]
             email = self.sid_to_email.get(sid, "unknown")
+            namespace = self.sid_to_namespace.get(sid, "unknown")
             
             # Remove this specific sid from user's connections
             if user_id in self.active_connections:
@@ -65,20 +72,56 @@ class ConnectionManager:
             del self.sid_to_user[sid]
             if sid in self.sid_to_email:
                 del self.sid_to_email[sid]
-            logger.info(f"User {user_id} ({email}) disconnected (session {sid})")
+            if sid in self.sid_to_namespace:
+                del self.sid_to_namespace[sid]
+            logger.info(f"User {user_id} ({email}) disconnected from {namespace} (session {sid})")
     
     def get_user_id(self, sid: str) -> Optional[int]:
         """Get user_id from session_id"""
         return self.sid_to_user.get(sid)
     
-    def get_sid(self, user_id: int) -> Optional[str]:
-        """Get first session_id from user_id (for backwards compatibility)"""
+    def get_sid(self, user_id: int, namespace: str = None) -> Optional[str]:
+        """
+        Get first session_id from user_id, optionally filtered by namespace.
+        
+        WARNING: Returns only the first session. If you need to support multiple
+        devices (e.g., phone + laptop), use get_user_sessions() instead.
+        
+        Args:
+            user_id: The user's ID
+            namespace: Optional namespace filter (e.g., '/chat', '/lobby')
+            
+        Returns:
+            First session_id or None
+        """
         sessions = self.active_connections.get(user_id, [])
+        
+        # Filter by namespace if provided
+        if namespace:
+            sessions = [sid for sid in sessions if self.sid_to_namespace.get(sid) == namespace]
+        
         return sessions[0] if sessions else None
     
     def get_user_sessions(self, namespace: str, user_id: int) -> list[str]:
-        """Get all session_ids for a user (for sending to multiple namespaces)"""
-        return self.active_connections.get(user_id, [])
+        """
+        Get all session_ids for a user in a specific namespace.
+        
+        Use this method instead of get_sid() to properly support users with
+        multiple active sessions (e.g., mobile + desktop).
+        
+        CRITICAL: This filters by namespace to ensure chat messages don't get
+        sent via lobby namespace and vice versa!
+        
+        Args:
+            namespace: The socket.io namespace (e.g., '/chat', '/lobby')
+            user_id: The user's ID
+            
+        Returns:
+            List of all session_ids for the user in this namespace (may be empty if offline)
+        """
+        all_sessions = self.active_connections.get(user_id, [])
+        # Filter to only return sids that belong to the requested namespace
+        return [sid for sid in all_sessions if self.sid_to_namespace.get(sid) == namespace]
     
     def is_user_online(self, user_id: int) -> bool:
         """Check if user is currently connected"""
@@ -220,8 +263,8 @@ class AuthNamespace(BaseNamespace):
             await self.disconnect(sid)
             return False
 
-        # Register connection globally with nickname
-        manager.connect(sid, user.id, user.email, user.nickname)
+        # Register connection globally with nickname and namespace
+        manager.connect(sid, user.id, user.email, user.nickname, namespace=self.namespace)
 
         # Call subclass hook if available
         if hasattr(self, 'handle_connect'):

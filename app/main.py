@@ -55,6 +55,13 @@ app = FastAPI(lifespan=lifespan)
 register_exception_handlers(app)
 
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker and monitoring"""
+    return {"status": "healthy"}
+
+
 # Exception handlers for custom validation errors
 @app.exception_handler(NicknameAlreadyExists)
 async def nickname_already_exists_handler(request: Request, exc: NicknameAlreadyExists):

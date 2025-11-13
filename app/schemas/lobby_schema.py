@@ -266,6 +266,7 @@ class GameSelectedEvent(BaseModel):
     game_name: str
     game_info: Dict[str, Any] = Field(..., description="GameInfo for the selected game")
     current_rules: Dict[str, Any] = Field(default_factory=dict, description="Current game rules")
+    max_players: int = Field(..., description="New max_players limit for the lobby")
     message: str = "Game selected"
 
 
@@ -277,4 +278,5 @@ class GameRulesUpdatedEvent(BaseModel):
 
 class GameSelectionClearedEvent(BaseModel):
     """Event emitted when game selection is cleared"""
+    max_players: int = Field(default=6, description="Max players set to 6 when clearing")
     message: str = "Game selection cleared"

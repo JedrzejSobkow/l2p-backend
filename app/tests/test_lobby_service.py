@@ -2080,11 +2080,12 @@ class TestLobbyService:
             host_id=1,
             host_nickname="Host",
             host_pfp_path=None,
-            max_players=4,
+            max_players=4,  # Will be overridden to game's min_players
             game_name="tictactoe"
         )
         
         assert lobby["selected_game"] == "tictactoe"
+        assert lobby["max_players"] == 2  # Set to tictactoe's min_players
         assert lobby["game_rules"] is not None
         assert "board_size" in lobby["game_rules"]
         assert lobby["game_rules"]["board_size"] == 3  # default
@@ -2097,7 +2098,7 @@ class TestLobbyService:
             host_id=1,
             host_nickname="Host",
             host_pfp_path=None,
-            max_players=4,
+            max_players=4,  # Will be overridden to game's min_players
             game_name="tictactoe",
             game_rules={
                 "board_size": 5,
@@ -2108,6 +2109,7 @@ class TestLobbyService:
         )
         
         assert lobby["selected_game"] == "tictactoe"
+        assert lobby["max_players"] == 2  # Set to tictactoe's min_players
         assert lobby["game_rules"]["board_size"] == 5
         assert lobby["game_rules"]["win_length"] == 4
         assert lobby["game_rules"]["timeout_type"] == "per_turn"
@@ -2331,6 +2333,8 @@ class TestLobbyService:
             max_players=4
         )
         
+        assert lobby["max_players"] == 4  # Initial value
+        
         result = await LobbyService.select_game(
             redis=redis_client,
             lobby_code=lobby["lobby_code"],
@@ -2339,6 +2343,7 @@ class TestLobbyService:
         )
         
         assert result["lobby"]["selected_game"] == "tictactoe"
+        assert result["lobby"]["max_players"] == 2  # Set to tictactoe's min_players
         assert "game_info" in result
         assert "current_rules" in result
         assert result["current_rules"]["board_size"] == 3  # Default
@@ -2535,9 +2540,12 @@ class TestLobbyService:
             host_id=1,
             host_nickname="Host",
             host_pfp_path=None,
-            max_players=4,
+            max_players=4,  # Will be overridden to 2 (tictactoe min)
             game_name="tictactoe"
         )
+        
+        # Verify initial state
+        assert lobby["max_players"] == 2  # tictactoe min_players
         
         # Clear game selection
         result = await LobbyService.clear_game_selection(
@@ -2549,10 +2557,11 @@ class TestLobbyService:
         assert result["lobby_code"] == lobby["lobby_code"]
         assert "Game selection cleared" in result["message"]
         
-        # Verify it was cleared
+        # Verify it was cleared and max_players reset to 6
         updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
         assert updated_lobby["selected_game"] is None
         assert updated_lobby["game_rules"] == {}
+        assert updated_lobby["max_players"] == 6  # Reset to 6
     
     async def test_clear_game_selection_not_host(self, redis_client):
         """Test that non-host cannot clear game selection"""
@@ -2957,3 +2966,154 @@ class TestLobbyService:
         # Verify the no-game lobby is in unfiltered results
         no_game_codes = [l["lobby_code"] for l in all_lobbies_explicit if l["selected_game"] is None]
         assert lobby_no_game["lobby_code"] in no_game_codes
+    
+    async def test_create_lobby_with_game_sets_min_players(self, redis_client):
+        """Test that creating a lobby with a game sets max_players to the game's minimum"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            game_name="tictactoe"  # tictactoe has min=2, max=2
+        )
+        
+        # Should set max_players to game's minimum (2)
+        assert lobby["max_players"] == 2
+        assert lobby["selected_game"] == "tictactoe"
+    
+    async def test_create_lobby_without_game_defaults_to_6(self, redis_client):
+        """Test that creating a lobby without a game defaults to 6 players"""
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None
+        )
+        
+        # Should default to 6 when no game is selected
+        assert lobby["max_players"] == 6
+        assert lobby["selected_game"] is None
+    
+    async def test_select_game_adjusts_max_players_for_one_player(self, redis_client):
+        """Test selecting a game with 1 player in lobby sets max_players to game's min"""
+        # Create lobby without game (max_players = 6)
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=6
+        )
+        
+        assert lobby["max_players"] == 6
+        
+        # Select tictactoe (min=2, max=2)
+        result = await LobbyService.select_game(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1,
+            game_name="tictactoe"
+        )
+        
+        # Should set to 2 (game's min, which is >= 1 current player)
+        assert result["lobby"]["max_players"] == 2
+    
+    async def test_select_game_adjusts_max_players_for_multiple_players(self, redis_client):
+        """Test selecting a game with multiple players sets appropriate max_players"""
+        # Create lobby without game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            max_players=6
+        )
+        
+        # Add 2 more players (total 3)
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=3,
+            user_nickname="Player3",
+            user_pfp_path=None
+        )
+        
+        # Now we have 3 players
+        # If we had a game with min=2, max=4, it should set max_players to 3
+        # But since we only have tictactoe (2-2) and clobber (2-2) in tests,
+        # let's test the error case
+        
+        # Try to select tictactoe (max=2) with 3 players - should fail
+        with pytest.raises(BadRequestException) as exc:
+            await LobbyService.select_game(
+                redis=redis_client,
+                lobby_code=lobby["lobby_code"],
+                host_id=1,
+                game_name="tictactoe"
+            )
+        
+        assert "Too many players" in str(exc.value.message)
+    
+    async def test_clear_game_sets_max_players_to_6(self, redis_client):
+        """Test that clearing game selection sets max_players to 6"""
+        # Create lobby with a game (max_players will be game's min)
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            game_name="tictactoe"
+        )
+        
+        assert lobby["max_players"] == 2  # tictactoe min
+        
+        # Clear game selection
+        await LobbyService.clear_game_selection(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1
+        )
+        
+        # Verify max_players is now 6
+        updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert updated_lobby["max_players"] == 6
+        assert updated_lobby["selected_game"] is None
+    
+    async def test_clear_game_with_multiple_players_sets_max_to_6(self, redis_client):
+        """Test clearing game with multiple players sets max_players to 6"""
+        # Create lobby with game
+        lobby = await LobbyService.create_lobby(
+            redis=redis_client,
+            host_id=1,
+            host_nickname="Host",
+            host_pfp_path=None,
+            game_name="tictactoe"
+        )
+        
+        # Add another player
+        await LobbyService.join_lobby(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            user_id=2,
+            user_nickname="Player2",
+            user_pfp_path=None
+        )
+        
+        # Clear game
+        await LobbyService.clear_game_selection(
+            redis=redis_client,
+            lobby_code=lobby["lobby_code"],
+            host_id=1
+        )
+        
+        # Should set to 6 regardless of current player count
+        updated_lobby = await LobbyService.get_lobby(redis_client, lobby["lobby_code"])
+        assert updated_lobby["max_players"] == 6
+        assert updated_lobby["current_players"] == 2
