@@ -180,7 +180,8 @@ class LobbyNamespace(AuthNamespace):
                 game_event = GameSelectedEvent(
                     game_name=request.game_name,
                     game_info=game_info.model_dump(),
-                    current_rules=lobby.get("game_rules", {})
+                    current_rules=lobby.get("game_rules", {}),
+                    max_players=lobby["max_players"]
                 )
                 await self.emit('game_selected', game_event.model_dump(mode='json'), room=sid)
             
