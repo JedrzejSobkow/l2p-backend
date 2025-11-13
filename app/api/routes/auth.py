@@ -6,6 +6,8 @@ from models.registered_user import RegisteredUser
 from schemas.user_schema import UserRead, UserCreate, UserUpdate
 from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
+from infrastructure.google_oauth import google_oauth_client
+from config.settings import settings
 
 
 # Initialize FastAPIUsers with our user manager and auth backend
@@ -21,6 +23,21 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 # Include authentication routes (login, logout)
 auth_router.include_router(
     fastapi_users.get_auth_router(auth_backend),
+)
+
+# Include Google OAuth routes
+# The scopes parameter tells FastAPI Users which permissions to request from Google
+auth_router.include_router(
+    fastapi_users.get_oauth_router(
+        google_oauth_client,
+        auth_backend,
+        settings.SECRET_KEY,
+        redirect_url=f"{settings.BACKEND_URL}/v1/auth/google/callback",
+        associate_by_email=True,  # Associate OAuth account with existing email
+        is_verified_by_default=True,  # Mark OAuth users as verified by default
+    ),
+    prefix="/google",
+    tags=["Authentication"],
 )
 
 # Custom registration endpoint that automatically requests verification

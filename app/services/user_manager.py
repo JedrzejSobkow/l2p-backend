@@ -10,6 +10,8 @@ from infrastructure.user_database import get_user_db
 from config.settings import settings
 from schemas.user_schema import UserCreate, UserUpdate
 from services.email_service import email_service
+import secrets
+import string
 
 
 class NicknameAlreadyExists(Exception):
@@ -107,10 +109,142 @@ class UserManager(IntegerIDMixin, BaseUserManager[RegisteredUser, int]):
         """Hook called after successful login"""
         print(f"🔐 User {user.id} ({user.nickname}) has logged in")
     
+    async def on_after_register(self, user: RegisteredUser, request: Optional[Request] = None):
+        """Hook called after user registration"""
+        print(f"✅ User {user.id} (nickname: {user.nickname}) has registered with email: {user.email}")
+    
+    async def _generate_unique_nickname(self, oauth_name: str, email: Optional[str] = None) -> str:
+        """Generate a unique nickname for OAuth users"""
+        # First, try to use the email username as the nickname
+        if email:
+            email_username = email.split('@')[0]
+            # Clean the username - remove dots, special chars, keep alphanumeric and underscores
+            clean_username = ''.join(c if c.isalnum() or c == '_' else '_' for c in email_username)
+            
+            # Try the cleaned email username first
+            try:
+                await self.validate_nickname_unique(clean_username)
+                return clean_username
+            except NicknameAlreadyExists:
+                # Try with a counter suffix
+                for counter in range(1, 100):
+                    try_nickname = f"{clean_username}{counter}"
+                    try:
+                        await self.validate_nickname_unique(try_nickname)
+                        return try_nickname
+                    except NicknameAlreadyExists:
+                        continue
+        
+        # Fallback: generate random nickname
+        random_suffix = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(5))
+        generated_nickname = f"{oauth_name}_user_{random_suffix}"
+        
+        # Ensure the nickname is unique
+        counter = 0
+        while True:
+            try:
+                await self.validate_nickname_unique(generated_nickname)
+                return generated_nickname  # Nickname is unique
+            except NicknameAlreadyExists:
+                counter += 1
+                generated_nickname = f"{oauth_name}_user_{random_suffix}_{counter}"
+    
+    async def oauth_callback(
+        self,
+        oauth_name: str,
+        access_token: str,
+        account_id: str,
+        account_email: str,
+        expires_at: Optional[int] = None,
+        refresh_token: Optional[str] = None,
+        request: Optional[Request] = None,
+        *,
+        associate_by_email: bool = False,
+        is_verified_by_default: bool = False,
+    ) -> RegisteredUser:
+        """
+        Handle OAuth callback and create user with auto-generated nickname.
+        
+        This override ensures that OAuth users get a valid nickname.
+        """
+        # Check if OAuth account already exists
+        try:
+            user = await self.get_by_oauth_account(oauth_name, account_id)
+            # Update existing OAuth account
+            await self.user_db.update_oauth_account(
+                user,
+                {"oauth_name": oauth_name, "account_id": account_id},
+                {
+                    "access_token": access_token,
+                    "account_email": account_email,
+                    "expires_at": expires_at,
+                    "refresh_token": refresh_token,
+                }
+            )
+            return user
+        except:
+            pass  # OAuth account doesn't exist, continue to create
+        
+        # Try to associate with existing user by email
+        if associate_by_email:
+            try:
+                user = await self.get_by_email(account_email)
+                # Create OAuth account association
+                await self.user_db.add_oauth_account(
+                    user,
+                    {
+                        "oauth_name": oauth_name,
+                        "account_id": account_id,
+                        "access_token": access_token,
+                        "account_email": account_email,
+                        "expires_at": expires_at,
+                        "refresh_token": refresh_token,
+                    }
+                )
+                return user
+            except:
+                pass  # User doesn't exist, continue to create
+        
+        # Generate a unique nickname for this OAuth user
+        nickname = await self._generate_unique_nickname(oauth_name, account_email)
+        
+        # Create new user with generated nickname
+        user_dict = {
+            "email": account_email,
+            "hashed_password": self.password_helper.hash(secrets.token_urlsafe(32)),
+            "is_verified": is_verified_by_default,
+            "nickname": nickname,  # Add the generated nickname
+        }
+        
+        user = await self.user_db.create(user_dict)
+        
+        # Create OAuth account association
+        await self.user_db.add_oauth_account(
+            user,
+            {
+                "oauth_name": oauth_name,
+                "account_id": account_id,
+                "access_token": access_token,
+                "account_email": account_email,
+                "expires_at": expires_at,
+                "refresh_token": refresh_token,
+            }
+        )
+        
+        await self.on_after_register(user, request)
+        
+        return user
+    
     async def create(self, user_create: UserCreate, safe: bool = False, request: Optional[Request] = None) -> RegisteredUser:
         """
-        Override create to validate nickname and email uniqueness before creating user
+        Override create to validate nickname and email uniqueness before creating user.
+        Also sets the generated nickname for OAuth users.
         """
+        # For OAuth users, we need to set a nickname if not provided
+        if not hasattr(user_create, 'nickname') or not user_create.nickname:
+            # This shouldn't happen with normal registration, but handle it for OAuth
+            raise ValueError("Nickname is required")
+        
         # Validate email is unique
         await self.validate_email_unique(user_create.email)
         

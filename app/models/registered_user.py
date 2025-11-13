@@ -1,7 +1,7 @@
 # app/models/registered_user.py
 
 from sqlalchemy import String, Integer
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
 from infrastructure.postgres_connection import Base
 
@@ -17,6 +17,9 @@ class RegisteredUser(Base, SQLAlchemyBaseUserTable[int]):
     nickname: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     pfp_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    
+    # OAuth accounts relationship
+    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship("OAuthAccount", lazy="selectin", cascade="all, delete-orphan")
     
     # fastapi-users provides these fields automatically:
     # - id: int (primary key)
