@@ -37,19 +37,25 @@ Edit `.env` with your configuration:
 -   `POSTGRES_PASSWORD`: PostgreSQL password (default: postgres)
 -   `POSTGRES_DB`: Database name (default: l2p_db)
 
-### 3. Start Services with Docker Compose (Recommended)
+### 3. Start with Docker Compose (Recommended)
 
-**The easiest way to start all required services (PostgreSQL, Redis, MinIO) is using Docker Compose:**
+**The easiest way to start the entire application with all services is using Docker Compose:**
 
 ```bash
-# Start all services
+# Start all services including the application
 docker-compose up -d
+
+# Build and start (if you made changes to the Dockerfile)
+docker-compose up -d --build
 
 # Check services status
 docker-compose ps
 
 # View logs
 docker-compose logs -f
+
+# View logs for specific service
+docker-compose logs -f app
 
 # Stop all services
 docker-compose down
@@ -59,10 +65,25 @@ docker-compose down -v
 ```
 
 **Services will be available at:**
+- **FastAPI Application**: `localhost:8000`
+- **API Documentation**: `localhost:8000/docs`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
 - MinIO API: `localhost:9000`
 - MinIO Console: `localhost:9001` (login: minioadmin / minioadmin)
+
+### 3b. Start Services Only (Development Mode)
+
+**If you want to run the application locally (not in Docker) but use Docker for services:**
+
+```bash
+# Start only the services (PostgreSQL, Redis, MinIO)
+docker-compose up -d postgres redis minio minio-client
+
+# Then run the application locally
+cd app
+uvicorn main:app --reload
+```
 
 **MinIO Configuration:**
 
@@ -76,7 +97,7 @@ The MinIO bucket (`l2p-bucket` by default) is automatically created on startup. 
 -   `MINIO_PORT`: API port (default: 9000)
 -   `MINIO_CONSOLE_PORT`: Console UI port (default: 9001)
 
-### 3b. Alternative: Start Services Individually
+### 3c. Alternative: Start Services Individually
 
 <details>
 <summary>Click to expand manual Docker commands</summary>
