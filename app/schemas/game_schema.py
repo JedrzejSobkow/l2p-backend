@@ -57,7 +57,7 @@ class GameCreatedResponse(BaseModel):
     game_name: str
     game_state: Dict[str, Any]
     game_info: GameInfo
-    current_turn_player_id: int
+    current_turn_identifier: str
     created_at: datetime
 
 
@@ -65,15 +65,15 @@ class MoveProcessedResponse(BaseModel):
     """Response after a move is processed"""
     game_state: Dict[str, Any]
     result: str
-    winner_id: Optional[int]
-    current_turn_player_id: Optional[int]
+    winner_identifier: Optional[str]
+    current_turn_identifier: Optional[str]
 
 
 class GameResultResponse(BaseModel):
     """Response with game result"""
     game_state: Dict[str, Any]
     result: str
-    winner_id: Optional[int]
+    winner_identifier: Optional[str]
 
 
 class AvailableGamesResponse(BaseModel):
@@ -85,7 +85,7 @@ class TimingInfoResponse(BaseModel):
     """Response with timing information for a game"""
     timeout_type: str
     timeout_seconds: int
-    current_player_id: int
+    current_identifier: str
     player_time_remaining: Optional[Dict[str, Optional[float]]] = None
 
 
@@ -96,31 +96,31 @@ class GameStartedEvent(BaseModel):
     game_name: str
     game_state: Dict[str, Any]
     game_info: GameInfo
-    current_turn_player_id: int
+    current_turn_identifier: str
 
 
 class MoveMadeEvent(BaseModel):
     """Event when a player makes a move"""
     lobby_code: str
-    player_id: int
+    identifier: str
     move_data: Dict[str, Any]
     game_state: Dict[str, Any]
-    current_turn_player_id: Optional[int]
+    current_turn_identifier: Optional[str]
 
 
 class GameEndedEvent(BaseModel):
     """Event when a game ends"""
     lobby_code: str
     result: str
-    winner_id: Optional[int]
+    winner_identifier: Optional[str]
     game_state: Dict[str, Any]
 
 
 class PlayerForfeitedEvent(BaseModel):
     """Event when a player forfeits"""
     lobby_code: str
-    player_id: int
-    winner_id: Optional[int]
+    identifier: str
+    winner_identifier: Optional[str]
     game_state: Dict[str, Any]
 
 

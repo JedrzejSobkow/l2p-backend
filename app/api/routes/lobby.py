@@ -44,9 +44,12 @@ async def create_lobby(
     """
     try:
         redis = get_redis()
+        # Convert registered user to identifier
+        host_identifier = f"user:{current_user.id}"
+        
         lobby = await LobbyService.create_lobby(
             redis=redis,
-            host_id=current_user.id,
+            host_identifier=host_identifier,
             host_nickname=current_user.nickname,
             host_pfp_path=current_user.pfp_path,
             name=request.name,
@@ -139,7 +142,7 @@ async def get_lobby(
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
             name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-            host_id=lobby["host_id"],
+            host_identifier=lobby["host_identifier"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
@@ -172,10 +175,11 @@ async def join_lobby(
     """
     try:
         redis = get_redis()
+        user_identifier = f"user:{current_user.id}"
         lobby = await LobbyService.join_lobby(
             redis=redis,
             lobby_code=lobby_code.upper(),
-            user_id=current_user.id,
+            user_identifier=user_identifier,
             user_nickname=current_user.nickname,
             user_pfp_path=current_user.pfp_path
         )
@@ -183,7 +187,7 @@ async def join_lobby(
         lobby_response = LobbyResponse(
             lobby_code=lobby["lobby_code"],
             name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-            host_id=lobby["host_id"],
+            host_identifier=lobby["host_identifier"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
@@ -226,10 +230,11 @@ async def leave_lobby(
     """
     try:
         redis = get_redis()
+        user_identifier = f"user:{current_user.id}"
         await LobbyService.leave_lobby(
             redis=redis,
             lobby_code=lobby_code.upper(),
-            user_id=current_user.id
+            user_identifier=user_identifier
         )
         
         return None
@@ -268,10 +273,11 @@ async def update_lobby_settings(
     """
     try:
         redis = get_redis()
+        user_identifier = f"user:{current_user.id}"
         lobby = await LobbyService.update_lobby_settings(
             redis=redis,
             lobby_code=lobby_code.upper(),
-            user_id=current_user.id,
+            user_identifier=user_identifier,
             name=request.name,
             max_players=request.max_players,
             is_public=request.is_public
@@ -280,7 +286,7 @@ async def update_lobby_settings(
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
             name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-            host_id=lobby["host_id"],
+            host_identifier=lobby["host_identifier"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
@@ -328,11 +334,12 @@ async def transfer_host(
     """
     try:
         redis = get_redis()
+        current_host_identifier = f"user:{current_user.id}"
         await LobbyService.transfer_host(
             redis=redis,
             lobby_code=lobby_code.upper(),
-            current_host_id=current_user.id,
-            new_host_id=request.new_host_id
+            current_host_identifier=current_host_identifier,
+            new_host_identifier=request.new_host_identifier
         )
         
         # Get updated lobby state
@@ -341,7 +348,7 @@ async def transfer_host(
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
             name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-            host_id=lobby["host_id"],
+            host_identifier=lobby["host_identifier"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
@@ -375,25 +382,26 @@ async def transfer_host(
         )
 
 
-@router.post("/{lobby_code}/kick/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{lobby_code}/kick/{identifier_to_kick}", status_code=status.HTTP_204_NO_CONTENT)
 async def kick_member(
     lobby_code: str,
-    user_id: int,
+    identifier_to_kick: str,
     current_user: RegisteredUser = Depends(current_active_user)
 ):
     """
     Kick a member from lobby (host only)
     
     - **lobby_code**: 6-character lobby code
-    - **user_id**: User ID of the member to kick
+    - **identifier_to_kick**: Identifier of the member to kick (e.g., "user:123" or "guest:uuid")
     """
     try:
         redis = get_redis()
+        host_identifier = f"user:{current_user.id}"
         await LobbyService.kick_member(
             redis=redis,
             lobby_code=lobby_code.upper(),
-            host_id=current_user.id,
-            user_id_to_kick=user_id
+            host_identifier=host_identifier,
+            identifier_to_kick=identifier_to_kick
         )
         
         return None
@@ -430,7 +438,8 @@ async def get_my_lobby(
     """
     try:
         redis = get_redis()
-        lobby_code = await LobbyService.get_user_lobby(redis, current_user.id)
+        user_identifier = f"user:{current_user.id}"
+        lobby_code = await LobbyService.get_user_lobby(redis, user_identifier)
         
         if not lobby_code:
             raise HTTPException(
@@ -449,7 +458,7 @@ async def get_my_lobby(
         return LobbyResponse(
             lobby_code=lobby["lobby_code"],
             name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-            host_id=lobby["host_id"],
+            host_identifier=lobby["host_identifier"],
             max_players=lobby["max_players"],
             current_players=lobby["current_players"],
             is_public=lobby.get("is_public", False),
