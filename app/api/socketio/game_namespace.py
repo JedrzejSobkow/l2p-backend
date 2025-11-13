@@ -1,11 +1,11 @@
 # app/api/socketio/game_namespace.py
 
 import socketio
-from infrastructure.socketio_manager import sio, manager, AuthNamespace
+from infrastructure.socketio_manager import sio, manager, GuestAuthNamespace
 from infrastructure.redis_connection import get_redis
 from services.game_service import GameService
 from services.lobby_service import LobbyService
-from models.registered_user import RegisteredUser
+from schemas.user_schema import SessionUser
 from schemas.game_schema import (
     CreateGameRequest,
     MakeMoveRequest,
@@ -31,7 +31,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class GameNamespace(AuthNamespace):
+class GameNamespace(GuestAuthNamespace):
     """
     Socket.IO namespace for turn-based game functionality.
     
@@ -39,13 +39,14 @@ class GameNamespace(AuthNamespace):
     Each game is bound to a lobby and players must be lobby members.
     """
 
-    async def handle_connect(self, sid, environ, user: RegisteredUser):
+    async def handle_connect(self, sid, environ, session_user: SessionUser):
         """Handle connection to game namespace"""
-        logger.info(f"Client connected to /game: {sid} (User: {user.id})")
+        identifier = session_user.identifier
+        logger.info(f"Client connected to /game: {sid} (Identifier: {identifier})")
         
         # Check if user is in a lobby with an active game
         redis = get_redis()
-        user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
+        user_lobby = await redis.get(LobbyService._user_lobby_key(identifier))
         
         if user_lobby:
             lobby_code = user_lobby.decode() if isinstance(user_lobby, bytes) else user_lobby
@@ -55,7 +56,7 @@ class GameNamespace(AuthNamespace):
             if game:
                 # Join the game room
                 await self.enter_room(sid, lobby_code)
-                logger.info(f"User {user.id} auto-joined game room {lobby_code}")
+                logger.info(f"User {identifier} auto-joined game room {lobby_code}")
                 
                 # Send current game state
                 await self.emit(
@@ -81,8 +82,8 @@ class GameNamespace(AuthNamespace):
         
         try:
             # Get authenticated user
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = GameErrorResponse(
                     error="Not authenticated",
                     details={"message": "Authentication required"}
@@ -90,8 +91,8 @@ class GameNamespace(AuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_authenticated_user(sid)
+            if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
@@ -100,11 +101,11 @@ class GameNamespace(AuthNamespace):
                 return
             
             # Get user's lobby
-            user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
+            user_lobby = await redis.get(LobbyService._user_lobby_key(identifier))
             if not user_lobby:
                 raise BadRequestException(
                     message="You are not in a lobby",
-                    details={"user_id": user.id}
+                    details={"identifier": identifier}
                 )
             
             lobby_code = user_lobby.decode() if isinstance(user_lobby, bytes) else user_lobby
@@ -118,7 +119,7 @@ class GameNamespace(AuthNamespace):
                 )
             
             # Check if user is the host
-            if lobby["host_id"] != user.id:
+            if lobby["host_id"] != identifier:
                 raise ForbiddenException(
                     message="Only the lobby host can start a game",
                     details={"lobby_code": lobby_code, "host_id": lobby["host_id"]}
@@ -163,11 +164,11 @@ class GameNamespace(AuthNamespace):
             
             # Join all lobby members to the game room
             for member in lobby["members"]:
-                member_user_id = member["user_id"]
-                member_sessions = manager.get_user_sessions(namespace="/game", user_id=member_user_id)
+                member_identifier = member["user_id"]
+                member_sessions = manager.get_user_sessions(namespace="/game", identifier=member_identifier)
                 for member_sid in member_sessions:
                     await self.enter_room(member_sid, lobby_code)
-                    logger.info(f"Added user {member_user_id} (sid: {member_sid}) to game room {lobby_code}")
+                    logger.info(f"Added user {member_identifier} (sid: {member_sid}) to game room {lobby_code}")
             
             # Send game started event to the creator
             event = GameStartedEvent(
@@ -217,8 +218,8 @@ class GameNamespace(AuthNamespace):
         
         try:
             # Get authenticated user
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = GameErrorResponse(
                     error="Not authenticated",
                     details={"message": "Authentication required"}
@@ -226,8 +227,8 @@ class GameNamespace(AuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_authenticated_user(sid)
+            if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
@@ -239,11 +240,11 @@ class GameNamespace(AuthNamespace):
             request = MakeMoveRequest(**data)
             
             # Get user's lobby
-            user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
+            user_lobby = await redis.get(LobbyService._user_lobby_key(identifier))
             if not user_lobby:
                 raise BadRequestException(
                     message="You are not in a lobby",
-                    details={"user_id": user.id}
+                    details={"identifier": identifier}
                 )
             
             lobby_code = user_lobby.decode() if isinstance(user_lobby, bytes) else user_lobby
@@ -252,14 +253,14 @@ class GameNamespace(AuthNamespace):
             move_result = await GameService.make_move(
                 redis=redis,
                 lobby_code=lobby_code,
-                player_id=user.id,
+                player_id=identifier,
                 move_data=request.move_data
             )
             
             # Broadcast move to all players in the room
             move_event = MoveMadeEvent(
                 lobby_code=lobby_code,
-                player_id=user.id,
+                player_id=identifier,
                 move_data=request.move_data,
                 game_state=move_result["game_state"],
                 current_turn_player_id=move_result.get("current_turn_player_id")
@@ -276,7 +277,7 @@ class GameNamespace(AuthNamespace):
                 )
                 await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"Move made by user {user.id} in lobby {lobby_code}")
+            logger.info(f"Move made by user {identifier} in lobby {lobby_code}")
             
         except ValidationError as e:
             error_response = GameErrorResponse(
@@ -311,8 +312,8 @@ class GameNamespace(AuthNamespace):
         
         try:
             # Get authenticated user
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = GameErrorResponse(
                     error="Not authenticated",
                     details={"message": "Authentication required"}
@@ -320,8 +321,8 @@ class GameNamespace(AuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_authenticated_user(sid)
+            if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
@@ -330,11 +331,11 @@ class GameNamespace(AuthNamespace):
                 return
             
             # Get user's lobby
-            user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
+            user_lobby = await redis.get(LobbyService._user_lobby_key(identifier))
             if not user_lobby:
                 raise BadRequestException(
                     message="You are not in a lobby",
-                    details={"user_id": user.id}
+                    details={"identifier": identifier}
                 )
             
             lobby_code = user_lobby.decode() if isinstance(user_lobby, bytes) else user_lobby
@@ -343,13 +344,13 @@ class GameNamespace(AuthNamespace):
             forfeit_result = await GameService.forfeit_game(
                 redis=redis,
                 lobby_code=lobby_code,
-                player_id=user.id
+                player_id=identifier
             )
             
             # Broadcast forfeit event to all players
             forfeit_event = PlayerForfeitedEvent(
                 lobby_code=lobby_code,
-                player_id=user.id,
+                player_id=identifier,
                 winner_id=forfeit_result["winner_id"],
                 game_state=forfeit_result["game_state"]
             )
@@ -364,7 +365,7 @@ class GameNamespace(AuthNamespace):
             )
             await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"User {user.id} forfeited game in lobby {lobby_code}")
+            logger.info(f"User {identifier} forfeited game in lobby {lobby_code}")
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_response = GameErrorResponse(

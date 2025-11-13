@@ -1,10 +1,11 @@
 # app/api/socketio/lobby_namespace.py
 
 import socketio
-from infrastructure.socketio_manager import sio, manager, AuthNamespace
+from infrastructure.socketio_manager import sio, manager, GuestAuthNamespace
 from infrastructure.redis_connection import get_redis
 from services.lobby_service import LobbyService
 from models.registered_user import RegisteredUser
+from schemas.user_schema import SessionUser
 from schemas.lobby_schema import (
     CreateLobbyRequest,
     JoinLobbyRequest,
@@ -43,17 +44,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class LobbyNamespace(AuthNamespace):
-    """Socket.IO namespace for lobby functionality"""
+class LobbyNamespace(GuestAuthNamespace):
+    """Socket.IO namespace for lobby functionality (supports both users and guests)"""
 
-    async def handle_connect(self, sid, environ, user: RegisteredUser):
+    async def handle_connect(self, sid, environ, session_user):
         """Namespace-specific connect hook called after successful auth."""
-        logger.info(f"Client authenticated and connected to /lobby: {sid} (User: {user.id}, Email: {user.email})")
+        identifier = session_user.identifier
+        logger.info(f"Client authenticated and connected to /lobby: {sid} (Identifier: {identifier})")
         
-        # Check if user is already in a lobby and rejoin
+        # Check if user/guest is already in a lobby and rejoin
         try:
             redis = get_redis()
-            lobby_code = await LobbyService.get_user_lobby(redis, user.id)
+            lobby_code = await LobbyService.get_user_lobby(redis, identifier)
             
             if lobby_code:
                 # User is in a lobby, join the Socket.IO room
@@ -65,7 +67,7 @@ class LobbyNamespace(AuthNamespace):
                     lobby_response = LobbyResponse(
                         lobby_code=lobby["lobby_code"],
                         name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-                        host_id=lobby["host_id"],
+                        host_identifier=lobby["host_identifier"],
                         max_players=lobby["max_players"],
                         current_players=lobby["current_players"],
                         is_public=lobby.get("is_public", False),
@@ -76,17 +78,17 @@ class LobbyNamespace(AuthNamespace):
                         game_rules=lobby.get("game_rules", {})
                     )
                     await self.emit('lobby_state', lobby_response.model_dump(mode='json'), room=sid)
-                    logger.info(f"User {user.id} rejoined lobby {lobby_code}")
+                    logger.info(f"Identifier {identifier} rejoined lobby {lobby_code}")
         except Exception as e:
             logger.error(f"Error checking user lobby on connect: {str(e)}")
     
     async def handle_disconnect(self, sid):
         """Called when client disconnects - leave lobby on disconnect"""
-        user_id = manager.get_user_id(sid)
-        if not user_id:
+        identifier = manager.get_identifier(sid)
+        if not identifier:
             return
         
-        logger.info(f"User {user_id} disconnected from /lobby")
+        logger.info(f"Identifier {identifier} disconnected from /lobby")
         
         # Note: We don't automatically remove from lobby on disconnect
         # User can reconnect and rejoin. Lobby cleanup happens on explicit leave or timeout
@@ -110,8 +112,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -119,27 +121,22 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_nickname = manager.get_nickname(user_id)
-            if not user_nickname:
-                # Fetch from database if not cached
-                user = await self.get_authenticated_user(sid)
-                if not user:
-                    error_response = LobbyErrorResponse(
-                        message='User not found',
-                        error_code='USER_NOT_FOUND'
-                    )
-                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
-                    return
-                user_nickname = user.nickname
+            session_user = await self.get_authenticated_user(sid)
+            if not session_user:
+                error_response = LobbyErrorResponse(
+                    message='Session user not found',
+                    error_code='USER_NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
             
             # Create lobby
             redis = get_redis()
-            user = await self.get_authenticated_user(sid)
             lobby = await LobbyService.create_lobby(
                 redis=redis,
-                host_id=user_id,
-                host_nickname=user_nickname,
-                host_pfp_path=user.pfp_path if user else None,
+                host_identifier=identifier,
+                host_nickname=session_user.nickname,
+                host_pfp_path=session_user.pfp_path,
                 name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public,
@@ -158,7 +155,7 @@ class LobbyNamespace(AuthNamespace):
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby["name"],
-                host_id=lobby["host_id"],
+                host_identifier=lobby["host_identifier"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
@@ -185,7 +182,7 @@ class LobbyNamespace(AuthNamespace):
                 )
                 await self.emit('game_selected', game_event.model_dump(mode='json'), room=sid)
             
-            logger.info(f"User {user_id} created lobby '{lobby['name']}' ({lobby['lobby_code']})" +
+            logger.info(f"Identifier {identifier} created lobby '{lobby['name']}' ({lobby['lobby_code']})" +
                        (f" with game {request.game_name}" if request.game_name else ""))
             
         except BadRequestException as e:
@@ -222,8 +219,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -231,31 +228,23 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_nickname = manager.get_nickname(user_id)
-            user = None
-            if not user_nickname:
-                user = await self.get_authenticated_user(sid)
-                if not user:
-                    error_response = LobbyErrorResponse(
-                        message='User not found',
-                        error_code='USER_NOT_FOUND'
-                    )
-                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
-                    return
-                user_nickname = user.nickname
-            
-            # Get user for pfp_path if not already fetched
+            user = await self.get_authenticated_user(sid)
             if not user:
-                user = await self.get_authenticated_user(sid)
+                error_response = LobbyErrorResponse(
+                    message='User not found',
+                    error_code='USER_NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
             
             # Join lobby
             redis = get_redis()
             lobby = await LobbyService.join_lobby(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                user_id=user_id,
-                user_nickname=user_nickname,
-                user_pfp_path=user.pfp_path if user else None
+                user_identifier=identifier,
+                user_nickname=user.nickname,
+                user_pfp_path=user.pfp_path
             )
             
             # Join Socket.IO room
@@ -265,7 +254,7 @@ class LobbyNamespace(AuthNamespace):
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-                host_id=lobby["host_id"],
+                host_identifier=lobby["host_identifier"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
@@ -279,14 +268,14 @@ class LobbyNamespace(AuthNamespace):
             await self.emit('lobby_joined', response.model_dump(mode='json'), room=sid)
             
             # Notify all members in lobby about new member
-            new_member = next(m for m in lobby["members"] if m["user_id"] == user_id)
+            new_member = next(m for m in lobby["members"] if m["identifier"] == identifier)
             member_joined_event = LobbyMemberJoinedEvent(
                 member=LobbyMemberResponse(**new_member),
                 current_players=lobby["current_players"]
             )
             await self.emit('member_joined', member_joined_event.model_dump(mode='json'), room=request.lobby_code, skip_sid=sid)
             
-            logger.info(f"User {user_id} joined lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} joined lobby {request.lobby_code}")
             
         except (NotFoundException, BadRequestException) as e:
             error_response = LobbyErrorResponse(
@@ -322,8 +311,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -331,14 +320,21 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_nickname = manager.get_nickname(user_id)
+            user = await self.get_authenticated_user(sid)
+            if not user:
+                error_response = LobbyErrorResponse(
+                    message='User not found',
+                    error_code='USER_NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
             
             # Leave lobby
             redis = get_redis()
             result = await LobbyService.leave_lobby(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                user_id=user_id
+                user_identifier=identifier
             )
             
             # Leave Socket.IO room
@@ -356,8 +352,8 @@ class LobbyNamespace(AuthNamespace):
                 current_players = len(updated_lobby["members"]) if updated_lobby else 0
                 
                 member_left_event = LobbyMemberLeftEvent(
-                    user_id=user_id,
-                    nickname=user_nickname or "Unknown",
+                    identifier=identifier,
+                    nickname=user.nickname,
                     current_players=current_players
                 )
                 await self.emit('member_left', member_left_event.model_dump(mode='json'), room=request.lobby_code)
@@ -365,13 +361,13 @@ class LobbyNamespace(AuthNamespace):
                 # If host was transferred
                 if result.get("host_transferred"):
                     host_transfer_event = LobbyHostTransferredEvent(
-                        old_host_id=result["old_host_id"],
-                        new_host_id=result["new_host_id"],
+                        old_host_identifier=result["old_host_identifier"],
+                        new_host_identifier=result["new_host_identifier"],
                         new_host_nickname=result["new_host_nickname"]
                     )
                     await self.emit('host_transferred', host_transfer_event.model_dump(mode='json'), room=request.lobby_code)
                 
-                logger.info(f"User {user_id} left lobby {request.lobby_code}")
+                logger.info(f"Identifier {identifier} left lobby {request.lobby_code}")
             else:
                 # Lobby was closed
                 logger.info(f"Lobby {request.lobby_code} closed after last member left")
@@ -410,8 +406,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -421,7 +417,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Get user's current lobby
             redis = get_redis()
-            lobby_code = await LobbyService.get_user_lobby(redis, user_id)
+            lobby_code = await LobbyService.get_user_lobby(redis, identifier)
             if not lobby_code:
                 error_response = LobbyErrorResponse(
                     message='You are not in a lobby',
@@ -434,7 +430,7 @@ class LobbyNamespace(AuthNamespace):
             lobby = await LobbyService.update_lobby_settings(
                 redis=redis,
                 lobby_code=lobby_code,
-                user_id=user_id,
+                host_identifier=identifier,
                 name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
@@ -448,7 +444,7 @@ class LobbyNamespace(AuthNamespace):
             )
             await self.emit('settings_updated', settings_updated_event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"User {user_id} updated lobby {lobby_code} settings")
+            logger.info(f"Identifier {identifier} updated lobby {lobby_code} settings")
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else \
@@ -486,8 +482,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -497,7 +493,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Get user's current lobby
             redis = get_redis()
-            lobby_code = await LobbyService.get_user_lobby(redis, user_id)
+            lobby_code = await LobbyService.get_user_lobby(redis, identifier)
             if not lobby_code:
                 error_response = LobbyErrorResponse(
                     message='You are not in a lobby',
@@ -510,19 +506,19 @@ class LobbyNamespace(AuthNamespace):
             result = await LobbyService.transfer_host(
                 redis=redis,
                 lobby_code=lobby_code,
-                current_host_id=user_id,
-                new_host_id=request.new_host_id
+                current_host_identifier=identifier,
+                new_host_identifier=request.new_host_identifier
             )
             
             # Notify all members
             host_transfer_event = LobbyHostTransferredEvent(
-                old_host_id=result["old_host_id"],
-                new_host_id=result["new_host_id"],
+                old_host_identifier=result["old_host_identifier"],
+                new_host_identifier=result["new_host_identifier"],
                 new_host_nickname=result["new_host_nickname"]
             )
             await self.emit('host_transferred', host_transfer_event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"Host transferred from {user_id} to {request.new_host_id} in lobby {lobby_code}")
+            logger.info(f"Host transferred from {identifier} to {request.new_host_identifier} in lobby {lobby_code}")
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else \
@@ -548,8 +544,8 @@ class LobbyNamespace(AuthNamespace):
         Expected data: {} (optional, gets user's current lobby)
         """
         try:
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -559,7 +555,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Get user's current lobby
             redis = get_redis()
-            lobby_code = await LobbyService.get_user_lobby(redis, user_id)
+            lobby_code = await LobbyService.get_user_lobby(redis, identifier)
             if not lobby_code:
                 error_response = LobbyErrorResponse(
                     message='You are not in a lobby',
@@ -581,7 +577,7 @@ class LobbyNamespace(AuthNamespace):
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-                host_id=lobby["host_id"],
+                host_identifier=lobby["host_identifier"],
                 max_players=lobby["max_players"],
                 current_players=lobby["current_players"],
                 is_public=lobby.get("is_public", False),
@@ -609,8 +605,8 @@ class LobbyNamespace(AuthNamespace):
         Expected data: {"lobby_code": str}
         """
         try:
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -664,8 +660,8 @@ class LobbyNamespace(AuthNamespace):
         Expected data: {"game_name": str (optional)}
         """
         try:
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -685,7 +681,7 @@ class LobbyNamespace(AuthNamespace):
                 LobbyResponse(
                     lobby_code=lobby["lobby_code"],
                     name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-                    host_id=lobby["host_id"],
+                    host_identifier=lobby["host_identifier"],
                     max_players=lobby["max_players"],
                     current_players=lobby["current_players"],
                     is_public=lobby.get("is_public", False),
@@ -731,8 +727,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -742,7 +738,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Get user's current lobby
             redis = get_redis()
-            lobby_code = await LobbyService.get_user_lobby(redis, user_id)
+            lobby_code = await LobbyService.get_user_lobby(redis, identifier)
             if not lobby_code:
                 error_response = LobbyErrorResponse(
                     message='You are not in a lobby',
@@ -755,12 +751,12 @@ class LobbyNamespace(AuthNamespace):
             result = await LobbyService.kick_member(
                 redis=redis,
                 lobby_code=lobby_code,
-                host_id=user_id,
-                user_id_to_kick=request.user_id
+                host_identifier=identifier,
+                identifier_to_kick=request.identifier
             )
             
             # Get kicked user's sid to force disconnect from lobby room
-            kicked_sid = manager.get_sid(request.user_id, namespace='/lobby')
+            kicked_sid = manager.get_sid_by_identifier(request.identifier, namespace='/lobby')
             if kicked_sid:
                 await self.leave_room(kicked_sid, lobby_code)
                 # Notify kicked user
@@ -771,13 +767,13 @@ class LobbyNamespace(AuthNamespace):
             
             # Notify all remaining members
             member_kicked_event = MemberKickedEvent(
-                user_id=result["user_id"],
+                identifier=result["identifier"],
                 nickname=result["nickname"],
-                kicked_by_id=user_id
+                kicked_by_identifier=identifier
             )
             await self.emit('member_kicked', member_kicked_event.model_dump(mode='json'), room=lobby_code)
             
-            logger.info(f"User {request.user_id} kicked from lobby {lobby_code} by host {user_id}")
+            logger.info(f"Identifier {request.identifier} kicked from lobby {lobby_code} by host {identifier}")
             
         except (NotFoundException, BadRequestException, ForbiddenException) as e:
             error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else \
@@ -815,8 +811,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -829,18 +825,18 @@ class LobbyNamespace(AuthNamespace):
             result = await LobbyService.toggle_ready(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                user_id=user_id
+                user_identifier=identifier
             )
             
             # Notify all members in the lobby
             ready_event = MemberReadyChangedEvent(
-                user_id=result["user_id"],
+                identifier=result["identifier"],
                 nickname=result["nickname"],
                 is_ready=result["is_ready"]
             )
             await self.emit('member_ready_changed', ready_event.model_dump(mode='json'), room=request.lobby_code)
             
-            logger.info(f"User {user_id} toggled ready to {result['is_ready']} in lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} toggled ready to {result['is_ready']} in lobby {request.lobby_code}")
             
         except (NotFoundException, BadRequestException) as e:
             error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST'
@@ -877,8 +873,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -886,37 +882,29 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_nickname = manager.get_nickname(user_id)
-            user = None
-            if not user_nickname:
-                user = await self.get_authenticated_user(sid)
-                if not user:
-                    error_response = LobbyErrorResponse(
-                        message='User not found',
-                        error_code='USER_NOT_FOUND'
-                    )
-                    await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
-                    return
-                user_nickname = user.nickname
-            
-            # Get user pfp_path if not already fetched
+            user = await self.get_authenticated_user(sid)
             if not user:
-                user = await self.get_authenticated_user(sid)
+                error_response = LobbyErrorResponse(
+                    message='User not found',
+                    error_code='USER_NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
             
             # Save message
             redis = get_redis()
             message = await LobbyService.save_lobby_message(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                user_id=user_id,
-                user_nickname=user_nickname,
-                user_pfp_path=user.pfp_path if user else None,
+                user_identifier=identifier,
+                user_nickname=user.nickname,
+                user_pfp_path=user.pfp_path,
                 content=request.content
             )
             
             # Broadcast message to all members in lobby
             message_response = LobbyMessageResponse(
-                user_id=message["user_id"],
+                identifier=message["identifier"],
                 nickname=message["nickname"],
                 pfp_path=message.get("pfp_path"),
                 content=message["content"],
@@ -924,7 +912,7 @@ class LobbyNamespace(AuthNamespace):
             )
             await self.emit('lobby_message', message_response.model_dump(mode='json'), room=request.lobby_code)
             
-            logger.info(f"User {user_id} sent message to lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} sent message to lobby {request.lobby_code}")
             
         except (NotFoundException, BadRequestException) as e:
             error_code = 'NOT_FOUND' if isinstance(e, NotFoundException) else 'BAD_REQUEST'
@@ -957,27 +945,24 @@ class LobbyNamespace(AuthNamespace):
                 logger.debug(f"Invalid typing indicator data: {e}")
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 return
             
-            user_nickname = manager.get_nickname(user_id)
-            if not user_nickname:
-                user = await self.get_authenticated_user(sid)
-                if not user:
-                    return
-                user_nickname = user.nickname
+            user = await self.get_authenticated_user(sid)
+            if not user:
+                return
             
             # Verify user is in this lobby
             redis = get_redis()
-            user_lobby = await LobbyService.get_user_lobby(redis, user_id)
+            user_lobby = await LobbyService.get_user_lobby(redis, identifier)
             if user_lobby != request.lobby_code:
                 return
             
             # Send typing indicator to all other members in lobby
             typing_response = LobbyUserTypingResponse(
-                user_id=user_id,
-                nickname=user_nickname
+                identifier=identifier,
+                nickname=user.nickname
             )
             await self.emit('lobby_user_typing', typing_response.model_dump(mode='json'), room=request.lobby_code, skip_sid=sid)
             
@@ -991,8 +976,8 @@ class LobbyNamespace(AuthNamespace):
         Expected data: {"lobby_code": str, "limit": int (optional, default 50)}
         """
         try:
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -1013,7 +998,7 @@ class LobbyNamespace(AuthNamespace):
             
             # Verify user is in this lobby
             redis = get_redis()
-            user_lobby = await LobbyService.get_user_lobby(redis, user_id)
+            user_lobby = await LobbyService.get_user_lobby(redis, identifier)
             if user_lobby != lobby_code:
                 error_response = LobbyErrorResponse(
                     message='You are not a member of this lobby',
@@ -1028,7 +1013,7 @@ class LobbyNamespace(AuthNamespace):
             # Convert to response format
             messages_response = [
                 LobbyMessageResponse(
-                    user_id=msg["user_id"],
+                    identifier=msg["identifier"],
                     nickname=msg["nickname"],
                     pfp_path=msg.get("pfp_path"),
                     content=msg["content"],
@@ -1078,8 +1063,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -1092,7 +1077,7 @@ class LobbyNamespace(AuthNamespace):
             result = await LobbyService.select_game(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                host_id=user_id,
+                host_identifier=identifier,
                 game_name=request.game_name
             )
             
@@ -1106,7 +1091,7 @@ class LobbyNamespace(AuthNamespace):
             )
             await self.emit('game_selected', event.model_dump(mode='json'), room=request.lobby_code)
             
-            logger.info(f"User {user_id} selected game '{request.game_name}' for lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} selected game '{request.game_name}' for lobby {request.lobby_code}")
             
         except (NotFoundException, ForbiddenException, BadRequestException) as e:
             error_response = LobbyErrorResponse(
@@ -1143,8 +1128,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -1157,7 +1142,7 @@ class LobbyNamespace(AuthNamespace):
             result = await LobbyService.update_game_rules(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                host_id=user_id,
+                host_identifier=identifier,
                 rules=request.rules
             )
             
@@ -1166,7 +1151,7 @@ class LobbyNamespace(AuthNamespace):
             event = GameRulesUpdatedEvent(rules=result["rules"])
             await self.emit('game_rules_updated', event.model_dump(mode='json'), room=request.lobby_code)
             
-            logger.info(f"User {user_id} updated game rules for lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} updated game rules for lobby {request.lobby_code}")
             
         except (NotFoundException, ForbiddenException, BadRequestException) as e:
             error_response = LobbyErrorResponse(
@@ -1203,8 +1188,8 @@ class LobbyNamespace(AuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = LobbyErrorResponse(
                     message='Not authenticated',
                     error_code='AUTH_ERROR'
@@ -1217,7 +1202,7 @@ class LobbyNamespace(AuthNamespace):
             await LobbyService.clear_game_selection(
                 redis=redis,
                 lobby_code=request.lobby_code,
-                host_id=user_id
+                host_identifier=identifier
             )
             
             # Broadcast event to all lobby members
@@ -1225,7 +1210,7 @@ class LobbyNamespace(AuthNamespace):
             event = GameSelectionClearedEvent(max_players=6)
             await self.emit('game_selection_cleared', event.model_dump(mode='json'), room=request.lobby_code)
             
-            logger.info(f"User {user_id} cleared game selection for lobby {request.lobby_code}")
+            logger.info(f"Identifier {identifier} cleared game selection for lobby {request.lobby_code}")
             
         except (NotFoundException, ForbiddenException, BadRequestException) as e:
             error_response = LobbyErrorResponse(
