@@ -161,11 +161,13 @@ class GameNamespace(AuthNamespace):
                 rules=rules
             )
             
-            # Join the creator to the game room
-            await self.enter_room(sid, lobby_code)
-            
-            # Note: Other players will be added to the room when they connect to /game namespace
-            # (handled in handle_connect method)
+            # Join all lobby members to the game room
+            for member in lobby["members"]:
+                member_user_id = member["user_id"]
+                member_sessions = manager.get_user_sessions(namespace="/game", user_id=member_user_id)
+                for member_sid in member_sessions:
+                    await self.enter_room(member_sid, lobby_code)
+                    logger.info(f"Added user {member_user_id} (sid: {member_sid}) to game room {lobby_code}")
             
             # Send game started event to the creator
             event = GameStartedEvent(
@@ -175,7 +177,7 @@ class GameNamespace(AuthNamespace):
                 game_info=game_result["game_info"],
                 current_turn_player_id=game_result["current_turn_player_id"]
             )
-            await self.emit("game_started", event.model_dump(mode='json'), room=sid)
+            # await self.emit("game_started", event.model_dump(mode='json'), room=sid)
             
             # Also broadcast to the room (in case other players are already connected)
             await self.emit("game_started", event.model_dump(mode='json'), room=lobby_code)
