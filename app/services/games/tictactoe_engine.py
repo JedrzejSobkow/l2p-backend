@@ -145,16 +145,25 @@ class TicTacToeEngine(GameEngineInterface):
             if winner:
                 return winner
         
-        # Check diagonals
-        diag1 = [board[i][i] for i in range(self.board_size)]
-        winner = self._check_line(diag1)
-        if winner:
-            return winner
+        # Check all diagonals (top-left to bottom-right direction)
+        for start_row in range(self.board_size - self.win_length + 1):
+            for start_col in range(self.board_size - self.win_length + 1):
+                # Check diagonal from (start_row, start_col)
+                max_len = min(self.board_size - start_row, self.board_size - start_col)
+                diagonal = [board[start_row + i][start_col + i] for i in range(max_len)]
+                winner = self._check_line(diagonal)
+                if winner:
+                    return winner
         
-        diag2 = [board[i][self.board_size - 1 - i] for i in range(self.board_size)]
-        winner = self._check_line(diag2)
-        if winner:
-            return winner
+        # Check all anti-diagonals (top-right to bottom-left direction)
+        for start_row in range(self.board_size - self.win_length + 1):
+            for start_col in range(self.win_length - 1, self.board_size):
+                # Check anti-diagonal from (start_row, start_col)
+                max_len = min(self.board_size - start_row, start_col + 1)
+                anti_diagonal = [board[start_row + i][start_col - i] for i in range(max_len)]
+                winner = self._check_line(anti_diagonal)
+                if winner:
+                    return winner
         
         return None
     
