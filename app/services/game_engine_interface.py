@@ -17,6 +17,7 @@ class GameResult(Enum):
     DRAW = "draw"
     FORFEIT = "forfeit"
     TIMEOUT = "timeout"
+    PLAYER_LEFT = "player_left"
 
 
 class TimeoutType(Enum):
