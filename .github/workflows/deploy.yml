@@ -2,7 +2,7 @@ name: Deploy Backend
 
 on:
   push:
-    branches: [cd]
+    branches: [main]
 
 jobs:
   deploy:
@@ -18,8 +18,8 @@ jobs:
           script: |
             cd /home/github-runner/l2p-backend
             git reset --hard HEAD
-            git checkout cd
-            git pull origin cd
+            git checkout main
+            git pull origin main
             docker-compose down
             docker-compose pull
             docker-compose up -d --build
