@@ -777,6 +777,24 @@ class LobbyNamespace(GuestAuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
+            # Check if there's an active game in this lobby
+            from services.game_service import GameService
+            game = await GameService.get_game(redis, lobby_code)
+            game_ended_result = None
+            
+            # If game is active and in progress, handle player being kicked
+            if game and game.get("game_state", {}).get("result") == "in_progress":
+                try:
+                    # End the game due to player being kicked
+                    game_ended_result = await GameService.handle_player_left(
+                        redis=redis,
+                        lobby_code=lobby_code,
+                        identifier=request.identifier
+                    )
+                    logger.info(f"Game ended due to player {request.identifier} being kicked from lobby {lobby_code}")
+                except Exception as e:
+                    logger.error(f"Error handling kicked player left game: {e}", exc_info=True)
+            
             # Kick member
             result = await LobbyService.kick_member(
                 redis=redis,
@@ -794,6 +812,16 @@ class LobbyNamespace(GuestAuthNamespace):
                     'lobby_code': lobby_code,
                     'message': 'You have been kicked from the lobby'
                 }, room=kicked_sid)
+            
+            # If game was ended due to player being kicked, broadcast game_ended event
+            if game_ended_result:
+                end_event = GameEndedEvent(
+                    lobby_code=lobby_code,
+                    result=game_ended_result["result"],
+                    winner_identifier=game_ended_result["winner_identifier"],
+                    game_state=game_ended_result["game_state"]
+                )
+                await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
             
             # Notify all remaining members
             member_kicked_event = MemberKickedEvent(
