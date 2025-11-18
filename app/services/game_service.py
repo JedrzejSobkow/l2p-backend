@@ -482,6 +482,69 @@ class GameService:
         }
     
     @staticmethod
+    async def handle_player_left(
+        redis: Redis,
+        lobby_code: str,
+        identifier: str
+    ) -> Dict[str, Any]:
+        """
+        Handle a player leaving the lobby during an active game.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            identifier: Identifier of the player who left (e.g., 'user:123' or 'guest:uuid')
+            
+        Returns:
+            Dictionary with updated game state
+            
+        Raises:
+            NotFoundException: If game not found
+        """
+        # Load engine and game state
+        engine = await GameService._load_engine(redis, lobby_code)
+        if not engine:
+            raise NotFoundException(
+                message="Game not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        state_raw = await redis.get(GameService._game_state_key(lobby_code))
+        if not state_raw:
+            raise NotFoundException(
+                message="Game state not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        game_state = json.loads(state_raw)
+        
+        # Process player leaving - determine winner (other player)
+        result, winner_identifier = engine.forfeit_game(identifier)
+        
+        # Update game state with player_left result instead of forfeit
+        game_state["result"] = GameResult.PLAYER_LEFT.value
+        game_state["winner_identifier"] = winner_identifier
+        game_state["left_by"] = identifier
+        
+        # Save updated state
+        await redis.set(
+            GameService._game_state_key(lobby_code),
+            json.dumps(game_state),
+            ex=GameService.GAME_TTL
+        )
+        
+        # Clear timeout key since game ended
+        await GameService._clear_timeout_key(redis, lobby_code)
+        
+        logger.info(f"Player {identifier} left game in lobby {lobby_code}")
+        
+        return {
+            "game_state": game_state,
+            "result": GameResult.PLAYER_LEFT.value,
+            "winner_identifier": winner_identifier,
+        }
+    
+    @staticmethod
     async def get_timing_info(redis: Redis, lobby_code: str) -> Optional[Dict[str, Any]]:
         """
         Get timing information for the current game.

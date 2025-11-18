@@ -33,6 +33,7 @@ from schemas.lobby_schema import (
     LobbyMessageResponse,
     LobbyUserTypingResponse,
 )
+from schemas.game_schema import GameEndedEvent
 from pydantic import ValidationError
 from exceptions.domain_exceptions import (
     NotFoundException,
@@ -331,6 +332,25 @@ class LobbyNamespace(GuestAuthNamespace):
             
             # Leave lobby
             redis = get_redis()
+            
+            # Check if there's an active game in this lobby
+            from services.game_service import GameService
+            game = await GameService.get_game(redis, request.lobby_code)
+            game_ended_result = None
+            
+            # If game is active and in progress, handle player leaving
+            if game and game.get("game_state", {}).get("result") == "in_progress":
+                try:
+                    # End the game due to player leaving
+                    game_ended_result = await GameService.handle_player_left(
+                        redis=redis,
+                        lobby_code=request.lobby_code,
+                        identifier=identifier
+                    )
+                    logger.info(f"Game ended due to player {identifier} leaving lobby {request.lobby_code}")
+                except Exception as e:
+                    logger.error(f"Error handling player left game: {e}", exc_info=True)
+            
             result = await LobbyService.leave_lobby(
                 redis=redis,
                 lobby_code=request.lobby_code,
@@ -343,6 +363,16 @@ class LobbyNamespace(GuestAuthNamespace):
             # Send response to leaver
             response = LobbyLeftResponse()
             await self.emit('lobby_left', response.model_dump(mode='json'), room=sid)
+            
+            # If game was ended due to player leaving, broadcast game_ended event
+            if game_ended_result:
+                end_event = GameEndedEvent(
+                    lobby_code=request.lobby_code,
+                    result=game_ended_result["result"],
+                    winner_identifier=game_ended_result["winner_identifier"],
+                    game_state=game_ended_result["game_state"]
+                )
+                await self.emit("game_ended", end_event.model_dump(mode='json'), room=request.lobby_code)
             
             # If lobby still exists
             if result is not None:
