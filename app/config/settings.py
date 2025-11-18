@@ -46,13 +46,6 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_ID: str = "CHANGE-THIS-IN-PRODUCTION-USE-ENV-FILE"
     GOOGLE_OAUTH_CLIENT_SECRET: str = "CHANGE-THIS-IN-PRODUCTION-USE-ENV-FILE" 
     
-    # MinIO Configuration
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_SECURE: bool = False  # Set to True for HTTPS
-    MINIO_BUCKET_NAME: str = "l2p-bucket"
-    
     # File Upload Configuration
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB in bytes
     ALLOWED_IMAGE_TYPES: list = ["image/jpeg", "image/png", "image/gif", "image/webp"]
