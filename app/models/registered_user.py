@@ -17,6 +17,7 @@ class RegisteredUser(Base, SQLAlchemyBaseUserTable[int]):
     nickname: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     pfp_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    elo: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
     
     # OAuth accounts relationship
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship("OAuthAccount", lazy="selectin", cascade="all, delete-orphan")
