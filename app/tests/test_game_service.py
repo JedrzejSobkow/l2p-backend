@@ -481,6 +481,144 @@ class TestGameService:
             )
     
     # ============================================================================
+    # HANDLE PLAYER LEFT TESTS
+    # ============================================================================
+    
+    async def test_handle_player_left_success(self, redis_client):
+        """Test handling player leaving during an active game"""
+        # Create game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTEST",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]]
+        )
+        
+        # Player 1 leaves
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTEST",
+            identifier="user:1"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:2"
+        assert result["game_state"]["left_by"] == "user:1"
+        assert result["game_state"]["result"] == GameResult.PLAYER_LEFT.value
+        
+        # Verify state is saved
+        game = await GameService.get_game(redis_client, "LEFTTEST")
+        assert game["game_state"]["result"] == GameResult.PLAYER_LEFT.value
+        assert game["game_state"]["winner_identifier"] == "user:2"
+        assert game["game_state"]["left_by"] == "user:1"
+    
+    async def test_handle_player_left_with_timeout(self, redis_client):
+        """Test that timeout key is cleared when player leaves"""
+        # Create game with timeout
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTIMEOUT",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]],
+            rules={
+                "timeout_type": "per_turn",
+                "timeout_seconds": 30,
+                "timeout_action": "skip_turn"
+            }
+        )
+        
+        # Verify timeout key exists (set during game creation)
+        from services.timeout_checker import TimeoutChecker
+        timeout_key = TimeoutChecker.get_timeout_key("LEFTTIMEOUT")
+        timeout_exists = await redis_client.exists(timeout_key)
+        assert timeout_exists == 1
+        
+        # Player 1 leaves
+        await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTIMEOUT",
+            identifier="user:1"
+        )
+        
+        # Timeout key should be cleared
+        timeout_exists = await redis_client.exists(timeout_key)
+        assert timeout_exists == 0
+    
+    async def test_handle_player_left_game_not_found(self, redis_client):
+        """Test handling player left when game doesn't exist"""
+        with pytest.raises(NotFoundException, match="Game not found"):
+            await GameService.handle_player_left(
+                redis=redis_client,
+                lobby_code="NOEXIST",
+                identifier="user:1"
+            )
+    
+    async def test_handle_player_left_state_not_found(self, redis_client):
+        """Test handling player left when engine exists but state is missing"""
+        # Create only engine config
+        engine_config = {
+            "game_name": "tictactoe",
+            "lobby_code": "LEFTSTATE",
+            "identifiers": [1, 2],
+            "rules": {},
+            "current_turn_index": 0,
+        }
+        
+        await redis_client.set(
+            GameService._game_engine_key("LEFTSTATE"),
+            json.dumps(engine_config)
+        )
+        
+        with pytest.raises(NotFoundException, match="Game state not found"):
+            await GameService.handle_player_left(
+                redis=redis_client,
+                lobby_code="LEFTSTATE",
+                identifier="user:1"
+            )
+    
+    async def test_handle_player_left_second_player(self, redis_client):
+        """Test handling when second player leaves"""
+        # Create game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTEST2",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]]
+        )
+        
+        # Player 2 leaves (not current turn player)
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTEST2",
+            identifier="user:2"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:1"
+        assert result["game_state"]["left_by"] == "user:2"
+    
+    async def test_handle_player_left_guest_player(self, redis_client):
+        """Test handling when a guest player leaves"""
+        # Create game with guest
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTGUEST",
+            game_name="tictactoe",
+            identifiers=["guest:abc123", "user:1"]
+        )
+        
+        # Guest leaves
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTGUEST",
+            identifier="guest:abc123"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:1"
+        assert result["game_state"]["left_by"] == "guest:abc123"
+    
+    # ============================================================================
     # TIMING INFO TESTS
     # ============================================================================
     
