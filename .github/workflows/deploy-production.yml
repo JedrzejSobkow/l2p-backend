@@ -1,4 +1,4 @@
-name: Deploy Backend
+name: Deploy Production
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to server via SSH
+      - name: Deploy to production server via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -25,5 +25,5 @@ jobs:
             docker-compose up -d --build
             docker-compose run --rm app alembic upgrade head
             docker image prune -f
-            echo "✅ Backend deployed successfully!"
+            echo "✅ Production backend deployed successfully!"
             docker-compose ps
