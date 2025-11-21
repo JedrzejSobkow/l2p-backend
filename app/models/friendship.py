@@ -17,8 +17,8 @@ class Friendship(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships to RegisteredUser model
-    user_1 = relationship("RegisteredUser", foreign_keys=[user_id_1])
-    user_2 = relationship("RegisteredUser", foreign_keys=[user_id_2])
+    user_1 = relationship("RegisteredUser", foreign_keys=[user_id_1], back_populates="friendships_as_user_1")
+    user_2 = relationship("RegisteredUser", foreign_keys=[user_id_2], back_populates="friendships_as_user_2")
     
     # Relationship to ChatMessage model (one-to-many)
     messages = relationship("ChatMessage", back_populates="friendship", cascade="all, delete-orphan")

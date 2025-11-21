@@ -21,6 +21,10 @@ class RegisteredUser(Base, SQLAlchemyBaseUserTable[int]):
     # OAuth accounts relationship
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship("OAuthAccount", lazy="selectin", cascade="all, delete-orphan")
     
+    # Friendship relationships
+    friendships_as_user_1: Mapped[list["Friendship"]] = relationship("Friendship", foreign_keys="[Friendship.user_id_1]", back_populates="user_1", cascade="all, delete-orphan")
+    friendships_as_user_2: Mapped[list["Friendship"]] = relationship("Friendship", foreign_keys="[Friendship.user_id_2]", back_populates="user_2", cascade="all, delete-orphan")
+    
     # fastapi-users provides these fields automatically:
     # - id: int (primary key)
     # - email: str (unique, indexed)
