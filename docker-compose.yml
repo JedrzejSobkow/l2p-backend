@@ -71,17 +71,37 @@ services:
       # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DECODE_RESPONSES: ${REDIS_DECODE_RESPONSES:-true}
       # MinIO
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-l2p-bucket}
       MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_PORT: ${MINIO_PORT:-9000}
+      MINIO_CONSOLE_PORT: ${MINIO_CONSOLE_PORT:-9001}
       # Application
+      APP_NAME: ${APP_NAME:-L2P Backend}
+      DEBUG: ${DEBUG:-true}
+      # JWT Authentication
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      JWT_LIFETIME_SECONDS: ${JWT_LIFETIME_SECONDS:-3600}
+      # Google OAuth
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      # File Upload
+      MAX_IMAGE_SIZE: ${MAX_IMAGE_SIZE:-10485760}
+      IMAGE_URL_EXPIRY_HOURS: ${IMAGE_URL_EXPIRY_HOURS:-24}
+      # Email
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM:-L2P <noreply@rychu777.com>}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
+
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
