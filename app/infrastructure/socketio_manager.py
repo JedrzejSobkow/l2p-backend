@@ -378,7 +378,8 @@ class AuthNamespace(BaseNamespace):
             return False
 
         # Register connection globally with nickname and namespace
-        manager.connect(sid, user.id, user.email, user.nickname, namespace=self.namespace)
+        user_identifier = f"user:{user.id}"
+        manager.connect(sid, user_identifier, user.email, user.nickname, namespace=self.namespace)
 
         # Call subclass hook if available
         if hasattr(self, 'handle_connect'):
