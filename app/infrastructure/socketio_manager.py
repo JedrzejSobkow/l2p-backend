@@ -66,10 +66,13 @@ class ConnectionManager:
         
         # BACKWARD COMPATIBILITY: If it's a registered user, populate old mappings
         if identifier.startswith("user:"):
-            user_id = int(identifier.split(":")[1])
-            self.sid_to_user[sid] = user_id
-            if nickname:
-                self.user_to_nickname[user_id] = nickname
+            try:
+                user_id = int(identifier.split(":", 1)[1])
+                self.sid_to_user[sid] = user_id
+                if nickname:
+                    self.user_to_nickname[user_id] = nickname
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Failed to parse user_id from identifier {identifier}: {e}")
         
         logger.info(f"Connection {identifier} ({email}) with session {sid} to namespace {namespace}")
     
