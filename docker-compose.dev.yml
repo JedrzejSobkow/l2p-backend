@@ -1,0 +1,131 @@
+services:
+  # PostgreSQL Database - Development
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: l2p-postgres-dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-l2p_db_dev}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - l2p-network-dev
+
+  # Redis Cache & Session Store - Development
+  redis-dev:
+    image: redis:7-alpine
+    container_name: l2p-redis-dev
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis-data-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - l2p-network-dev
+
+  # MinIO Object Storage - Development
+  minio-dev:
+    image: quay.io/minio/minio:latest
+    container_name: l2p-minio-dev
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9002}:9000"      # API
+    volumes:
+      - minio-data-dev:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - l2p-network-dev
+
+  # FastAPI Application - Development
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: l2p-backend-dev
+    environment:
+      # Database
+      POSTGRES_HOST: postgres-dev
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-l2p_db_dev}
+      # Redis
+      REDIS_HOST: redis-dev
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DECODE_RESPONSES: ${REDIS_DECODE_RESPONSES:-true}
+      # MinIO
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio-dev:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-l2p-bucket-dev}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_PORT: ${MINIO_PORT:-9002}
+      MINIO_CONSOLE_PORT: ${MINIO_CONSOLE_PORT:-9003}
+      # Application
+      APP_NAME: ${APP_NAME:-L2P Backend Dev}
+      DEBUG: ${DEBUG:-true}
+      # JWT Authentication
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      JWT_LIFETIME_SECONDS: ${JWT_LIFETIME_SECONDS:-3600}
+      # Google OAuth
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      # File Upload
+      MAX_IMAGE_SIZE: ${MAX_IMAGE_SIZE:-10485760}
+      IMAGE_URL_EXPIRY_HOURS: ${IMAGE_URL_EXPIRY_HOURS:-24}
+      # Email
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM:-L2P Dev <noreply@rychu777.com>}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8001}
+
+    ports:
+      - "${APP_PORT:-8001}:8000"
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      redis-dev:
+        condition: service_healthy
+      minio-dev:
+        condition: service_healthy
+    volumes:
+      - ./app:/app
+    networks:
+      - l2p-network-dev
+    restart: unless-stopped
+
+volumes:
+  postgres-data-dev:
+    driver: local
+  redis-data-dev:
+    driver: local
+  minio-data-dev:
+    driver: local
+
+networks:
+  l2p-network-dev:
+    driver: bridge
