@@ -1,7 +1,7 @@
 """add_elo_to_registered_user
 
 Revision ID: 93c6bf288d1c
-Revises: a8d8968ad6b5
+Revises: 9d01d30271fb
 Create Date: 2025-11-20 20:33:48.823165
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '93c6bf288d1c'
-down_revision: Union[str, None] = 'a8d8968ad6b5'
+down_revision: Union[str, None] = '9d01d30271fb'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
