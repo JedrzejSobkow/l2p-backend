@@ -12,6 +12,7 @@ from schemas.friendship_schema import (
     UserSearchResult
 )
 from services.friendship_service import FriendshipService
+from services.user_status_service import UserStatusService
 from infrastructure.postgres_connection import get_db_session
 from api.routes.auth import current_active_user
 import math
@@ -76,6 +77,14 @@ async def send_friend_request(
         recipient_id=friendship_data.friend_user_id
     )
     
+    # Notify recipient
+    await UserStatusService.notify_friend_request(
+        sender_id=current_user.id,
+        recipient_id=friendship_data.friend_user_id,
+        sender_nickname=current_user.nickname,
+        sender_pfp_path=current_user.pfp_path
+    )
+    
     return friendship
 
 
@@ -120,6 +129,9 @@ async def remove_friendship(
         user_id=current_user.id,
         friend_id=friend_user_id
     )
+    
+    # Notify both users
+    await UserStatusService.notify_friendship_ended(current_user.id, friend_user_id)
     
     return None
 

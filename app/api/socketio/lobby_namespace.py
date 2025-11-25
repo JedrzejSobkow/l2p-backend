@@ -1242,6 +1242,105 @@ class LobbyNamespace(AuthNamespace):
             )
             await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
 
+    async def on_invite_friend(self, sid, data):
+        """
+        Invite a friend to the lobby
+        
+        Expected data: {"lobby_code": str, "friend_id": int}
+        """
+        try:
+            # Validate input
+            try:
+                from schemas.lobby_schema import InviteFriendRequest
+                request = InviteFriendRequest(**data)
+            except ValidationError as e:
+                error_response = LobbyErrorResponse(
+                    message='Invalid data format',
+                    error_code='VALIDATION_ERROR',
+                    details={'errors': e.errors()}
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            user_id = manager.get_user_id(sid)
+            if not user_id:
+                error_response = LobbyErrorResponse(
+                    message='Not authenticated',
+                    error_code='AUTH_ERROR'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Get user info for the invitation
+            user = await self.get_authenticated_user(sid)
+            if not user:
+                error_response = LobbyErrorResponse(
+                    message='User not found',
+                    error_code='USER_NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Get lobby info
+            redis = get_redis()
+            lobby = await LobbyService.get_lobby(redis, request.lobby_code)
+            if not lobby:
+                error_response = LobbyErrorResponse(
+                    message='Lobby not found',
+                    error_code='NOT_FOUND'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Check if user is in the lobby
+            user_in_lobby = any(m['user_id'] == user_id for m in lobby['members'])
+            if not user_in_lobby:
+                error_response = LobbyErrorResponse(
+                    message='You must be in the lobby to invite friends',
+                    error_code='FORBIDDEN'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Check if friend is online
+            friend_sessions = manager.get_user_sessions(namespace='/chat', user_id=request.friend_id)
+            if not friend_sessions:
+                error_response = LobbyErrorResponse(
+                    message='Friend is not online',
+                    error_code='FRIEND_OFFLINE'
+                )
+                await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+                return
+            
+            # Send invitation to friend
+            from schemas.lobby_schema import LobbyInviteReceivedEvent
+            invite_event = LobbyInviteReceivedEvent(
+                lobby_code=lobby['lobby_code'],
+                lobby_name=lobby.get('name', f"Game: {lobby['lobby_code']}"),
+                inviter_id=user.id,
+                inviter_nickname=user.nickname,
+                inviter_pfp_path=user.pfp_path,
+                game_name=lobby.get('selected_game'),
+                current_players=lobby['current_players'],
+                max_players=lobby['max_players']
+            )
+            
+            for friend_sid in friend_sessions:
+                await sio.emit('lobby_invite_received', invite_event.model_dump(mode='json'), room=friend_sid, namespace='/chat')
+            
+            logger.info(f"User {user_id} invited friend {request.friend_id} to lobby {request.lobby_code}")
+            
+            # Send confirmation to inviter
+            await self.emit('invite_sent', {'message': 'Invitation sent successfully'}, room=sid)
+            
+        except Exception as e:
+            logger.error(f"Error inviting friend: {str(e)}")
+            error_response = LobbyErrorResponse(
+                message='Failed to send invitation',
+                error_code='INTERNAL_ERROR'
+            )
+            await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+
     async def on_get_available_games(self, sid, data):
         """
         Get list of available games with their info

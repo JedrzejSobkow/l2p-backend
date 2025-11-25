@@ -16,6 +16,7 @@ class ChatMessageResponse(BaseModel):
     image_url: Optional[str]
     created_at: str  # ISO format datetime string
     is_mine: bool  # True if the message was sent by the current user
+    temp_id: Optional[str] = None  # Echoed back from client for matching
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -71,6 +72,7 @@ class SendChatMessageEvent(BaseModel):
     friend_user_id: int
     content: Optional[str] = None  # Optional if image_path is provided
     image_path: Optional[str] = None  # Optional if content is provided
+    temp_id: Optional[str] = None  # Client-generated temporary ID for matching confirmations
 
 
 class TypingIndicatorEvent(BaseModel):

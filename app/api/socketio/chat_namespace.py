@@ -13,6 +13,8 @@ from schemas.chat_schema import (
     UserTypingResponse,
     SocketErrorResponse
 )
+from services.user_status_service import UserStatusService
+from schemas.user_status_schema import UserStatus, FriendStatusListResponse
 from pydantic import ValidationError
 from fastapi import HTTPException
 import logging
@@ -30,6 +32,25 @@ class ChatNamespace(AuthNamespace):
         `authenticate_user`.
         """
         logger.info(f"Client authenticated and connected to /chat: {sid} (User: {user.id}, Email: {user.email})")
+        
+        # Notify friends that user is online
+        await UserStatusService.notify_friends(user.id, UserStatus.ONLINE)
+        
+        # Send initial friend statuses to the connecting user
+        initial_statuses = await UserStatusService.get_initial_friend_statuses(user.id)
+        response = FriendStatusListResponse(statuses=initial_statuses)
+        await self.emit('initial_friend_statuses', response.model_dump(mode='json'), room=sid)
+
+    async def handle_disconnect(self, sid):
+        """Handle disconnection"""
+        user_id = manager.get_user_id(sid)
+        if user_id:
+            # Check if this is the last connection for this user in this namespace
+            sessions = manager.get_user_sessions(namespace='/chat', user_id=user_id)
+            if len(sessions) <= 1:
+                # User is going offline
+                await UserStatusService.notify_friends(user_id, UserStatus.OFFLINE)
+
         
     
     async def on_send_message(self, sid, data):
@@ -90,7 +111,8 @@ class ChatNamespace(AuthNamespace):
                         content=message_data['content'],
                         image_url=message_data['image_url'],
                         created_at=message_data['created_at'],
-                        is_mine=True
+                        is_mine=True,
+                        temp_id=message_dto.temp_id  # Echo back temp_id for client matching
                     )
                     
                     # Send to sender (confirmation)

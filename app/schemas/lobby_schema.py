@@ -111,6 +111,18 @@ class ClearGameSelectionRequest(BaseModel):
     """Request to clear game selection (allows selecting a different game)"""
     lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
     
+    @classmethod
+    def validate_code_format(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Lobby code must be alphanumeric")
+        return v.upper()
+
+
+class InviteFriendRequest(BaseModel):
+    """Request to invite a friend to the lobby"""
+    lobby_code: str = Field(..., min_length=6, max_length=6, description="6-digit lobby code")
+    friend_id: int = Field(..., description="User ID of the friend to invite")
+    
     @field_validator('lobby_code')
     @classmethod
     def validate_code_format(cls, v: str) -> str:
@@ -280,3 +292,15 @@ class GameSelectionClearedEvent(BaseModel):
     """Event emitted when game selection is cleared"""
     max_players: int = Field(default=6, description="Max players set to 6 when clearing")
     message: str = "Game selection cleared"
+
+
+class LobbyInviteReceivedEvent(BaseModel):
+    """Event emitted when a user receives a lobby invitation"""
+    lobby_code: str
+    lobby_name: str
+    inviter_id: int
+    inviter_nickname: str
+    inviter_pfp_path: Optional[str] = None
+    game_name: Optional[str] = None
+    current_players: int
+    max_players: int
