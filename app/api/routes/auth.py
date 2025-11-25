@@ -8,6 +8,7 @@ from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
 from config.settings import settings
+from infrastructure.socketio_manager import manager
 
 
 # Initialize FastAPIUsers with our user manager and auth backend
@@ -73,6 +74,15 @@ current_active_user = fastapi_users.current_user(active=True) #TODO verification
 
 # Dependency to get current active superuser
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
+
+
+@users_router.get("/online-count", tags=["Users"])
+async def get_online_users_count():
+    """
+    Get the total number of online users.
+    """
+    count = manager.get_online_users_count()
+    return {"count": count}
 
 
 @users_router.delete("/me", status_code=204, tags=["Users"])
