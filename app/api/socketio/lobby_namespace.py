@@ -48,6 +48,35 @@ logger = logging.getLogger(__name__)
 class LobbyNamespace(GuestAuthNamespace):
     """Socket.IO namespace for lobby functionality (supports both users and guests)"""
 
+    @staticmethod
+    def _convert_member_to_new_format(member: dict) -> dict:
+        """Convert old member format (user_id) to new format (identifier)"""
+        if "identifier" in member:
+            return member
+        # Old format: convert user_id to identifier
+        member_copy = member.copy()
+        if "user_id" in member:
+            member_copy["identifier"] = f"user:{member['user_id']}"
+        return member_copy
+
+    @staticmethod
+    def _convert_lobby_to_new_format(lobby: dict) -> dict:
+        """Convert old lobby format to new format for compatibility"""
+        lobby_copy = lobby.copy()
+        
+        # Convert host_id to host_identifier if needed
+        if "host_identifier" not in lobby_copy and "host_id" in lobby_copy:
+            lobby_copy["host_identifier"] = f"user:{lobby_copy['host_id']}"
+        
+        # Convert members
+        if "members" in lobby_copy:
+            lobby_copy["members"] = [
+                LobbyNamespace._convert_member_to_new_format(m) 
+                for m in lobby_copy["members"]
+            ]
+        
+        return lobby_copy
+
     async def handle_connect(self, sid, environ, session_user):
         """Namespace-specific connect hook called after successful auth."""
         identifier = session_user.identifier
@@ -65,6 +94,7 @@ class LobbyNamespace(GuestAuthNamespace):
                 # Send current lobby state
                 lobby = await LobbyService.get_lobby(redis, lobby_code)
                 if lobby:
+                    lobby = self._convert_lobby_to_new_format(lobby)
                     lobby_response = LobbyResponse(
                         lobby_code=lobby["lobby_code"],
                         name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
@@ -122,7 +152,7 @@ class LobbyNamespace(GuestAuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            session_user = await self.get_authenticated_user(sid)
+            session_user = await self.get_session_user(sid)
             if not session_user:
                 error_response = LobbyErrorResponse(
                     message='Session user not found',
@@ -153,6 +183,7 @@ class LobbyNamespace(GuestAuthNamespace):
             await self.emit('lobby_created', response.model_dump(mode='json'), room=sid)
             
             # Send full lobby state
+            lobby = self._convert_lobby_to_new_format(lobby)
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby["name"],
@@ -229,8 +260,8 @@ class LobbyNamespace(GuestAuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_session_user(sid)
+            if not session_user:
                 error_response = LobbyErrorResponse(
                     message='User not found',
                     error_code='USER_NOT_FOUND'
@@ -244,14 +275,15 @@ class LobbyNamespace(GuestAuthNamespace):
                 redis=redis,
                 lobby_code=request.lobby_code,
                 user_identifier=identifier,
-                user_nickname=user.nickname,
-                user_pfp_path=user.pfp_path
+                user_nickname=session_user.nickname,
+                user_pfp_path=session_user.pfp_path
             )
             
             # Join Socket.IO room
             await self.enter_room(sid, request.lobby_code)
             
             # Send response to joiner
+            lobby = self._convert_lobby_to_new_format(lobby)
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
@@ -321,8 +353,8 @@ class LobbyNamespace(GuestAuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_session_user(sid)
+            if not session_user:
                 error_response = LobbyErrorResponse(
                     message='User not found',
                     error_code='USER_NOT_FOUND'
@@ -383,7 +415,7 @@ class LobbyNamespace(GuestAuthNamespace):
                 
                 member_left_event = LobbyMemberLeftEvent(
                     identifier=identifier,
-                    nickname=user.nickname,
+                    nickname=session_user.nickname,
                     current_players=current_players
                 )
                 await self.emit('member_left', member_left_event.model_dump(mode='json'), room=request.lobby_code)
@@ -604,6 +636,7 @@ class LobbyNamespace(GuestAuthNamespace):
                 return
             
             # Send lobby state
+            lobby = self._convert_lobby_to_new_format(lobby)
             lobby_response = LobbyResponse(
                 lobby_code=lobby["lobby_code"],
                 name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
@@ -709,19 +742,19 @@ class LobbyNamespace(GuestAuthNamespace):
             # Convert to response format
             lobbies_response = [
                 LobbyResponse(
-                    lobby_code=lobby["lobby_code"],
-                    name=lobby.get("name", f"Game: {lobby['lobby_code']}"),
-                    host_identifier=lobby["host_identifier"],
-                    max_players=lobby["max_players"],
-                    current_players=lobby["current_players"],
-                    is_public=lobby.get("is_public", False),
-                    members=[LobbyMemberResponse(**m) for m in lobby["members"]],
-                    created_at=lobby["created_at"],
-                    selected_game=lobby.get("selected_game"),
-                    selected_game_info=lobby.get("selected_game_info"),
-                    game_rules=lobby.get("game_rules", {})
+                    lobby_code=converted_lobby["lobby_code"],
+                    name=converted_lobby.get("name", f"Game: {converted_lobby['lobby_code']}"),
+                    host_identifier=converted_lobby["host_identifier"],
+                    max_players=converted_lobby["max_players"],
+                    current_players=converted_lobby["current_players"],
+                    is_public=converted_lobby.get("is_public", False),
+                    members=[LobbyMemberResponse(**m) for m in converted_lobby["members"]],
+                    created_at=converted_lobby["created_at"],
+                    selected_game=converted_lobby.get("selected_game"),
+                    selected_game_info=converted_lobby.get("selected_game_info"),
+                    game_rules=converted_lobby.get("game_rules", {})
                 )
-                for lobby in lobbies
+                for converted_lobby in [self._convert_lobby_to_new_format(lobby) for lobby in lobbies]
             ]
             
             response = PublicLobbiesResponse(
@@ -940,8 +973,8 @@ class LobbyNamespace(GuestAuthNamespace):
                 await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_session_user(sid)
+            if not session_user:
                 error_response = LobbyErrorResponse(
                     message='User not found',
                     error_code='USER_NOT_FOUND'
@@ -955,8 +988,8 @@ class LobbyNamespace(GuestAuthNamespace):
                 redis=redis,
                 lobby_code=request.lobby_code,
                 user_identifier=identifier,
-                user_nickname=user.nickname,
-                user_pfp_path=user.pfp_path,
+                user_nickname=session_user.nickname,
+                user_pfp_path=session_user.pfp_path,
                 content=request.content
             )
             
@@ -1007,8 +1040,8 @@ class LobbyNamespace(GuestAuthNamespace):
             if not identifier:
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_session_user(sid)
+            if not session_user:
                 return
             
             # Verify user is in this lobby
@@ -1020,7 +1053,7 @@ class LobbyNamespace(GuestAuthNamespace):
             # Send typing indicator to all other members in lobby
             typing_response = LobbyUserTypingResponse(
                 identifier=identifier,
-                nickname=user.nickname
+                nickname=session_user.nickname
             )
             await self.emit('lobby_user_typing', typing_response.model_dump(mode='json'), room=request.lobby_code, skip_sid=sid)
             

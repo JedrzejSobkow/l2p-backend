@@ -91,7 +91,7 @@ class GameNamespace(GuestAuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            session_user = await self.get_authenticated_user(sid)
+            session_user = await self.get_session_user(sid)
             if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
@@ -227,7 +227,7 @@ class GameNamespace(GuestAuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            session_user = await self.get_authenticated_user(sid)
+            session_user = await self.get_session_user(sid)
             if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
@@ -321,7 +321,7 @@ class GameNamespace(GuestAuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            session_user = await self.get_authenticated_user(sid)
+            session_user = await self.get_session_user(sid)
             if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
@@ -393,8 +393,8 @@ class GameNamespace(GuestAuthNamespace):
         
         try:
             # Get authenticated user
-            user_id = manager.get_user_id(sid)
-            if not user_id:
+            identifier = manager.get_identifier(sid)
+            if not identifier:
                 error_response = GameErrorResponse(
                     error="Not authenticated",
                     details={"message": "Authentication required"}
@@ -402,8 +402,8 @@ class GameNamespace(GuestAuthNamespace):
                 await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
                 return
             
-            user = await self.get_authenticated_user(sid)
-            if not user:
+            session_user = await self.get_session_user(sid)
+            if not session_user:
                 error_response = GameErrorResponse(
                     error="User not found",
                     details={"message": "Could not retrieve user information"}
@@ -412,11 +412,11 @@ class GameNamespace(GuestAuthNamespace):
                 return
             
             # Get user's lobby
-            user_lobby = await redis.get(LobbyService._user_lobby_key(user.id))
+            user_lobby = await redis.get(LobbyService._user_lobby_key(identifier))
             if not user_lobby:
                 raise BadRequestException(
                     message="You are not in a lobby",
-                    details={"user_id": user.id}
+                    details={"identifier": identifier}
                 )
             
             lobby_code = user_lobby.decode() if isinstance(user_lobby, bytes) else user_lobby
