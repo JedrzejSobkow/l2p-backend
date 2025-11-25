@@ -1,6 +1,6 @@
 # app/api/routes/auth.py
 
-from fastapi import APIRouter, Depends, Response, Request
+from fastapi import APIRouter, Depends, Response, Request, Query
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
 from schemas.user_schema import UserRead, UserCreate, UserUpdate
@@ -8,6 +8,9 @@ from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
 from config.settings import settings
+from sqlalchemy.ext.asyncio import AsyncSession
+from infrastructure.postgres_connection import get_async_session
+from sqlalchemy import select
 
 
 # Initialize FastAPIUsers with our user manager and auth backend
@@ -75,7 +78,32 @@ current_active_user = fastapi_users.current_user(active=True) #TODO verification
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 
-@users_router.delete("/me", status_code=204, tags=["Users"])
+@users_router.get("/leaderboard", response_model=list[UserRead])
+async def get_leaderboard(
+    n: int = Query(default=10, ge=1, le=100, description="Number of top players to retrieve"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Retrieve the top N players with the highest ELO ratings.
+    
+    Args:
+        n: Number of top players to retrieve (default: 10, max: 100)
+        
+    Returns:
+        List of users sorted by ELO rating in descending order
+    """
+    stmt = (
+        select(RegisteredUser)
+        .where(RegisteredUser.is_active == True)
+        .order_by(RegisteredUser.elo.desc())
+        .limit(n)
+    )
+    
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+    
+    return users
+
 async def delete_current_user(
     response: Response,
     user: RegisteredUser = Depends(current_active_user),
