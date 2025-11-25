@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.socketio_manager import manager, sio
 from infrastructure.postgres_connection import postgres_connection
+from infrastructure.redis_connection import redis_connection
 from models.friendship import Friendship
 from schemas.user_status_schema import UserStatus, UserStatusUpdateEvent, FriendStatusListResponse, FriendRequestEvent, FriendRemovedEvent
+from services.lobby_service import LobbyService
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ class UserStatusService:
         return friend_ids
 
     @classmethod
-    async def notify_friends(cls, user_id: int, status: UserStatus, game_name: Optional[str] = None):
+    async def notify_friends(cls, user_id: int, status: UserStatus, game_name: Optional[str] = None, lobby_code: Optional[str] = None, lobby_filled_slots: Optional[int] = None, lobby_max_slots: Optional[int] = None):
         """
         Notify all online friends of a user's status change.
         """
@@ -104,7 +106,10 @@ class UserStatusService:
         event = UserStatusUpdateEvent(
             user_id=user_id,
             status=status,
-            game_name=game_name
+            game_name=game_name,
+            lobby_code=lobby_code,
+            lobby_filled_slots=lobby_filled_slots,
+            lobby_max_slots=lobby_max_slots
         )
         event_data = event.model_dump(mode='json')
 
@@ -133,22 +138,51 @@ class UserStatusService:
             async with postgres_connection.session_factory() as session:
                 friend_ids = await cls.get_friends_ids(user_id, session)
             
+            # Get redis client
+            try:
+                redis = redis_connection.get_client()
+            except RuntimeError:
+                redis = None
+                logger.warning("Redis client not connected in get_initial_friend_statuses")
+
             for friend_id in friend_ids:
                 status = UserStatus.OFFLINE
                 game_name = None
+                lobby_code = None
+                lobby_filled_slots = None
+                lobby_max_slots = None
                 
-                # Check if in game (highest priority)
-                if friend_id in cls._in_game_users:
-                    status = UserStatus.IN_GAME
-                    game_name = cls._in_game_users[friend_id]
-                # Check if online
-                elif manager.is_user_online(friend_id):
+                # Check if online first (highest priority for OFFLINE status)
+                if not manager.is_user_online(friend_id):
+                    status = UserStatus.OFFLINE
+                else:
+                    # User is online, check if in game or lobby
                     status = UserStatus.ONLINE
+                    
+                    # Check if in game
+                    if friend_id in cls._in_game_users:
+                        status = UserStatus.IN_GAME
+                        game_name = cls._in_game_users[friend_id]
+                    else:
+                        # Check if in lobby
+                        if redis:
+                            user_lobby_key = LobbyService._user_lobby_key(friend_id)
+                            lobby_code_bytes = await redis.get(user_lobby_key)
+                            if lobby_code_bytes:
+                                lobby_code = lobby_code_bytes.decode() if isinstance(lobby_code_bytes, bytes) else lobby_code_bytes
+                                lobby = await LobbyService.get_lobby(redis, lobby_code)
+                                if lobby:
+                                    status = UserStatus.IN_LOBBY
+                                    lobby_filled_slots = lobby["current_players"]
+                                    lobby_max_slots = lobby["max_players"]
                 
                 statuses.append(UserStatusUpdateEvent(
                     user_id=friend_id,
                     status=status,
-                    game_name=game_name
+                    game_name=game_name,
+                    lobby_code=lobby_code,
+                    lobby_filled_slots=lobby_filled_slots,
+                    lobby_max_slots=lobby_max_slots
                 ))
                 
         except Exception as e:

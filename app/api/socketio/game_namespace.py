@@ -284,10 +284,23 @@ class GameNamespace(AuthNamespace):
                 
                 # Update status for all players
                 players = move_result["game_state"].get("players", [])
+                
+                # Get lobby info to restore IN_LOBBY status
+                lobby = await LobbyService.get_lobby(redis, lobby_code)
+
                 for player in players:
                     pid = player.get("id") if isinstance(player, dict) else getattr(player, "id", None)
                     if pid:
-                        await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
+                        if lobby:
+                            await UserStatusService.notify_friends(
+                                pid, 
+                                UserStatus.IN_LOBBY,
+                                lobby_code=lobby["lobby_code"],
+                                lobby_filled_slots=lobby["current_players"],
+                                lobby_max_slots=lobby["max_players"]
+                            )
+                        else:
+                            await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
             
             logger.info(f"Move made by user {user.id} in lobby {lobby_code}")
             
@@ -379,10 +392,23 @@ class GameNamespace(AuthNamespace):
             
             # Update status for all players
             players = forfeit_result["game_state"].get("players", [])
+            
+            # Get lobby info to restore IN_LOBBY status
+            lobby = await LobbyService.get_lobby(redis, lobby_code)
+
             for player in players:
                 pid = player.get("id") if isinstance(player, dict) else getattr(player, "id", None)
                 if pid:
-                    await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
+                    if lobby:
+                        await UserStatusService.notify_friends(
+                            pid, 
+                            UserStatus.IN_LOBBY,
+                            lobby_code=lobby["lobby_code"],
+                            lobby_filled_slots=lobby["current_players"],
+                            lobby_max_slots=lobby["max_players"]
+                        )
+                    else:
+                        await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
             
             logger.info(f"User {user.id} forfeited game in lobby {lobby_code}")
             

@@ -34,7 +34,36 @@ class ChatNamespace(AuthNamespace):
         logger.info(f"Client authenticated and connected to /chat: {sid} (User: {user.id}, Email: {user.email})")
         
         # Notify friends that user is online
-        await UserStatusService.notify_friends(user.id, UserStatus.ONLINE)
+        # Check if user is in lobby
+        from services.lobby_service import LobbyService
+        from infrastructure.redis_connection import redis_connection
+        
+        status = UserStatus.ONLINE
+        lobby_data = None
+        
+        try:
+            redis = redis_connection.get_client()
+            user_lobby_key = LobbyService._user_lobby_key(user.id)
+            lobby_code_bytes = await redis.get(user_lobby_key)
+            if lobby_code_bytes:
+                lobby_code = lobby_code_bytes.decode() if isinstance(lobby_code_bytes, bytes) else lobby_code_bytes
+                lobby = await LobbyService.get_lobby(redis, lobby_code)
+                if lobby:
+                    status = UserStatus.IN_LOBBY
+                    lobby_data = lobby
+        except Exception as e:
+            logger.error(f"Error checking lobby status in handle_connect: {e}")
+
+        if status == UserStatus.IN_LOBBY and lobby_data:
+             await UserStatusService.notify_friends(
+                user.id, 
+                status, 
+                lobby_code=lobby_data["lobby_code"],
+                lobby_filled_slots=lobby_data["current_players"],
+                lobby_max_slots=lobby_data["max_players"]
+            )
+        else:
+            await UserStatusService.notify_friends(user.id, UserStatus.ONLINE)
         
         # Send initial friend statuses to the connecting user
         initial_statuses = await UserStatusService.get_initial_friend_statuses(user.id)
