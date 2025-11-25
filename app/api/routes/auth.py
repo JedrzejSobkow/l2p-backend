@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Response, Request, Query
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
-from schemas.user_schema import UserRead, UserCreate, UserUpdate
+from schemas.user_schema import UserRead, UserCreate, UserUpdate, UserLeaderboardRead
 from services.user_manager import get_user_manager, UserManager
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
@@ -78,7 +78,7 @@ current_active_user = fastapi_users.current_user(active=True) #TODO verification
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 
-@users_router.get("/leaderboard", response_model=list[UserRead])
+@users_router.get("/leaderboard", response_model=list[UserLeaderboardRead])
 async def get_leaderboard(
     n: int = Query(default=10, ge=1, le=100, description="Number of top players to retrieve"),
     session: AsyncSession = Depends(get_db_session),
