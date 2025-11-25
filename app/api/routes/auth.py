@@ -9,7 +9,7 @@ from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
 from config.settings import settings
 from sqlalchemy.ext.asyncio import AsyncSession
-from infrastructure.postgres_connection import get_async_session
+from infrastructure.postgres_connection import get_db_session
 from sqlalchemy import select
 
 
@@ -81,7 +81,7 @@ current_superuser = fastapi_users.current_user(active=True, superuser=True)
 @users_router.get("/leaderboard", response_model=list[UserRead])
 async def get_leaderboard(
     n: int = Query(default=10, ge=1, le=100, description="Number of top players to retrieve"),
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db_session),
 ):
     """
     Retrieve the top N players with the highest ELO ratings.
