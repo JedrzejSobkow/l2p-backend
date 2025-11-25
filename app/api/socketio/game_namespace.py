@@ -269,7 +269,7 @@ class GameNamespace(AuthNamespace):
             # If game ended, broadcast game ended event
             if move_result["result"] != "in_progress":
                 # Update ELOs
-                await self._update_player_elos(redis, lobby_code, move_result["game_state"])
+                await GameService.update_player_elos(redis, lobby_code, move_result["game_state"])
                 
                 end_event = GameEndedEvent(
                     lobby_code=lobby_code,
@@ -359,7 +359,7 @@ class GameNamespace(AuthNamespace):
             await self.emit("player_forfeited", forfeit_event.model_dump(mode='json'), room=lobby_code)
             
             # Update ELOs
-            await self._update_player_elos(redis, lobby_code, forfeit_result["game_state"])
+            await GameService.update_player_elos(redis, lobby_code, forfeit_result["game_state"])
             
             # Broadcast game ended event
             end_event = GameEndedEvent(
@@ -453,44 +453,7 @@ class GameNamespace(AuthNamespace):
             )
             await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
 
-    async def _update_player_elos(self, redis, lobby_code: str, game_state: dict):
-        """
-        Update ELO scores for players after game end.
-        Supports multi-player games with variable adjustments.
-        """
-        try:
-            # Get game engine to calculate adjustment
-            engine = await GameService._load_engine(redis, lobby_code)
-            if not engine:
-                return
-            
-            # Calculate adjustments for all players
-            adjustments = engine.calculate_elo_adjustments(game_state)
-            
-            if not adjustments:
-                return
-            
-            # Update users in DB
-            from infrastructure.postgres_connection import postgres_connection
-            from sqlalchemy import update
-            
-            async with postgres_connection.session_factory() as session:
-                for player_id, adjustment in adjustments.items():
-                    if adjustment == 0:
-                        continue
-                        
-                    await session.execute(
-                        update(RegisteredUser)
-                        .where(RegisteredUser.id == player_id)
-                        .values(elo=RegisteredUser.elo + adjustment)
-                    )
-                
-                await session.commit()
-                
-            logger.info(f"Updated ELOs for lobby {lobby_code}: {adjustments}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update ELOs: {e}", exc_info=True)
+
 
 
 # Register the namespace
