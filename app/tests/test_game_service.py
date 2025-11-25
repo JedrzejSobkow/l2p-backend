@@ -811,3 +811,267 @@ class TestGameService:
         
         assert isinstance(games, list)
         assert "tictactoe" in games
+    
+    # ============================================================================
+    # UPDATE PLAYER ELOS TESTS
+    # ============================================================================
+    
+    async def test_update_player_elos_on_win(self, redis_client, db_session):
+        """Test that player ELOs are updated correctly after a win"""
+        from models.registered_user import RegisteredUser
+        from sqlalchemy import select
+        from unittest.mock import AsyncMock, patch
+        from contextlib import asynccontextmanager
+        
+        # Create test users in database
+        user1 = RegisteredUser(
+            id=1,
+            nickname="player1",
+            email="player1@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        user2 = RegisteredUser(
+            id=2,
+            nickname="player2",
+            email="player2@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        db_session.add(user1)
+        db_session.add(user2)
+        await db_session.commit()
+        
+        # Create a game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="ELO_TEST1",
+            game_name="tictactoe",
+            player_ids=[1, 2]
+        )
+        
+        # Create a game state with player 1 as winner
+        game_state = {
+            "result": GameResult.PLAYER_WIN.value,
+            "winner_id": 1,
+            "board": [["X", "X", "X"], ["O", "O", ""], ["", "", ""]],
+            "move_count": 5
+        }
+        
+        # Mock the postgres_connection to use our test session
+        @asynccontextmanager
+        async def mock_session_factory():
+            yield db_session
+        
+        with patch('infrastructure.postgres_connection.postgres_connection') as mock_pg:
+            mock_pg.session_factory = mock_session_factory
+            
+            # Update ELOs
+            await GameService.update_player_elos(redis_client, "ELO_TEST1", game_state)
+        
+        # Verify ELO changes in database
+        await db_session.refresh(user1)
+        await db_session.refresh(user2)
+        
+        assert user1.elo == 501  # Winner gets +1
+        assert user2.elo == 499  # Loser gets -1
+    
+    async def test_update_player_elos_on_draw(self, redis_client, db_session):
+        """Test that player ELOs are not updated on a draw (no winner)"""
+        from models.registered_user import RegisteredUser
+        from unittest.mock import patch
+        from contextlib import asynccontextmanager
+        
+        # Create test users in database
+        user1 = RegisteredUser(
+            id=3,
+            nickname="player3",
+            email="player3@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        user2 = RegisteredUser(
+            id=4,
+            nickname="player4",
+            email="player4@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        db_session.add(user1)
+        db_session.add(user2)
+        await db_session.commit()
+        
+        # Create a game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="ELO_DRAW",
+            game_name="tictactoe",
+            player_ids=[3, 4]
+        )
+        
+        # Create a game state with draw result (no winner)
+        game_state = {
+            "result": GameResult.DRAW.value,
+            "winner_id": None,
+            "board": [["X", "O", "X"], ["X", "O", "O"], ["O", "X", "X"]],
+            "move_count": 9
+        }
+        
+        # Mock the postgres_connection to use our test session
+        @asynccontextmanager
+        async def mock_session_factory():
+            yield db_session
+        
+        with patch('infrastructure.postgres_connection.postgres_connection') as mock_pg:
+            mock_pg.session_factory = mock_session_factory
+            
+            # Update ELOs
+            await GameService.update_player_elos(redis_client, "ELO_DRAW", game_state)
+        
+        # Verify ELO remains unchanged
+        await db_session.refresh(user1)
+        await db_session.refresh(user2)
+        
+        assert user1.elo == 500  # No change
+        assert user2.elo == 500  # No change
+    
+    async def test_update_player_elos_engine_not_found(self, redis_client):
+        """Test that update_player_elos handles missing engine gracefully"""
+        # Try to update ELOs for non-existent game
+        game_state = {
+            "result": GameResult.PLAYER_WIN.value,
+            "winner_id": 1
+        }
+        
+        # Should not raise an exception, just return silently
+        await GameService.update_player_elos(redis_client, "NOEXIST", game_state)
+        # If no exception is raised, test passes
+    
+    async def test_update_player_elos_no_adjustments(self, redis_client, db_session):
+        """Test that zero adjustments don't trigger database updates"""
+        from models.registered_user import RegisteredUser
+        from unittest.mock import AsyncMock, patch
+        from contextlib import asynccontextmanager
+        
+        # Create test users in database
+        user1 = RegisteredUser(
+            id=5,
+            nickname="player5",
+            email="player5@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        user2 = RegisteredUser(
+            id=6,
+            nickname="player6",
+            email="player6@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        db_session.add(user1)
+        db_session.add(user2)
+        await db_session.commit()
+        
+        # Create a game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="ELO_ZERO",
+            game_name="tictactoe",
+            player_ids=[5, 6]
+        )
+        
+        # Mock the calculate_elo_adjustments to return zero adjustments
+        from services.game_service import GameService as GS
+        original_load_engine = GS._load_engine
+        
+        async def mock_load_engine(redis, lobby_code):
+            engine = await original_load_engine(redis, lobby_code)
+            if engine:
+                # Override the calculate_elo_adjustments method
+                def mock_calc(game_state):
+                    return {5: 0, 6: 0}  # Return zero adjustments
+                engine.calculate_elo_adjustments = mock_calc
+            return engine
+        
+        # Mock the postgres_connection to use our test session
+        @asynccontextmanager
+        async def mock_session_factory():
+            yield db_session
+        
+        with patch.object(GS, '_load_engine', side_effect=mock_load_engine), \
+             patch('infrastructure.postgres_connection.postgres_connection') as mock_pg:
+            mock_pg.session_factory = mock_session_factory
+            
+            game_state = {
+                "result": GameResult.DRAW.value,
+                "winner_id": None
+            }
+            
+            # Update ELOs - should skip database update for zero adjustments
+            await GameService.update_player_elos(redis_client, "ELO_ZERO", game_state)
+        
+        # Verify ELOs are unchanged
+        await db_session.refresh(user1)
+        await db_session.refresh(user2)
+        
+        assert user1.elo == 500
+        assert user2.elo == 500
+    
+    async def test_update_player_elos_forfeit(self, redis_client, db_session):
+        """Test ELO updates when a player forfeits"""
+        from models.registered_user import RegisteredUser
+        from unittest.mock import patch
+        from contextlib import asynccontextmanager
+        
+        # Create test users in database
+        user1 = RegisteredUser(
+            id=7,
+            nickname="player7",
+            email="player7@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        user2 = RegisteredUser(
+            id=8,
+            nickname="player8",
+            email="player8@test.com",
+            hashed_password="hash",
+            elo=500
+        )
+        db_session.add(user1)
+        db_session.add(user2)
+        await db_session.commit()
+        
+        # Create a game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="ELO_FORFEIT",
+            game_name="tictactoe",
+            player_ids=[7, 8]
+        )
+        
+        # Forfeit the game (player 7 forfeits, player 8 wins)
+        forfeit_result = await GameService.forfeit_game(
+            redis=redis_client,
+            lobby_code="ELO_FORFEIT",
+            player_id=7
+        )
+        
+        # Mock the postgres_connection to use our test session
+        @asynccontextmanager
+        async def mock_session_factory():
+            yield db_session
+        
+        with patch('infrastructure.postgres_connection.postgres_connection') as mock_pg:
+            mock_pg.session_factory = mock_session_factory
+            
+            # Update ELOs based on forfeit result
+            await GameService.update_player_elos(redis_client, "ELO_FORFEIT", forfeit_result["game_state"])
+        
+        # Verify ELO changes
+        await db_session.refresh(user1)
+        await db_session.refresh(user2)
+        
+        assert user1.elo == 499  # Forfeiter loses ELO
+        assert user2.elo == 501  # Winner gains ELO
+
