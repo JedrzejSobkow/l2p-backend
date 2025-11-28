@@ -64,7 +64,7 @@ class UserCreate(UserValidatorsMixin, schemas.BaseUserCreate):
     """Schema for creating a new user - only requires email, password, and nickname"""
     email: EmailStr
     password: str = Field(..., min_length=3)
-    nickname: str = Field(..., min_length=3, max_length=255)
+    nickname: str = Field(..., min_length=3, max_length=20)
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -81,7 +81,7 @@ class UserUpdate(UserValidatorsMixin, schemas.BaseUserUpdate):
     """Schema for updating user data - only allows patching pfp_path, description, password, and nickname"""
     email: None = None
 
-    nickname: Optional[str] = Field(None, min_length=3, max_length=255)
+    nickname: Optional[str] = Field(None, min_length=3, max_length=20)
     password: Optional[str] = Field(None, min_length=3)
     pfp_path: Optional[str] = None
     description: Optional[str] = Field(None, max_length=1000)
@@ -106,6 +106,82 @@ class UserUpdate(UserValidatorsMixin, schemas.BaseUserUpdate):
                 "nickname": "new_cool_nickname",
                 "pfp_path": "/images/avatar/1.png",
                 "description": "Pensjonariusz Bekas"
+            }
+        }
+    )
+
+
+# ================ Guest User Models ================
+
+class GuestUser(schemas.BaseModel):
+    """Guest user - temporary user without account"""
+    guest_id: str
+    nickname: str
+    is_guest: bool = True
+    pfp_path: str = "/images/avatar/1.png"
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "guest_id": "550e8400-e29b-41d4-a716-446655440000",
+                "nickname": "guest123456",
+                "is_guest": True,
+                "pfp_path": "/images/avatar/1.png"
+            }
+        }
+    )
+
+
+class SessionUser(schemas.BaseModel):
+    """Union type - either registered user or guest"""
+    user_id: Optional[int] = None  # None for guests
+    guest_id: Optional[str] = None  # None for registered users
+    nickname: str
+    is_guest: bool
+    pfp_path: Optional[str] = None
+    email: Optional[str] = None  # None for guests
+    
+    @property
+    def identifier(self) -> str:
+        """Unique identifier - user_id or guest_id"""
+        return f"guest:{self.guest_id}" if self.is_guest else f"user:{self.user_id}"
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "user_id": 123,
+                    "guest_id": None,
+                    "nickname": "john_doe",
+                    "is_guest": False,
+                    "pfp_path": "/images/avatar/5.png",
+                    "email": "john@example.com"
+                },
+                {
+                    "user_id": None,
+                    "guest_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "nickname": "guest123456",
+                    "is_guest": True,
+                    "pfp_path": "/images/avatar/1.png",
+                    "email": None
+                }
+            ]
+        }
+    )
+
+
+class GuestSessionResponse(schemas.BaseModel):
+    """Response after creating guest session"""
+    guest_id: str
+    nickname: str
+    expires_in: int  # seconds
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "guest_id": "550e8400-e29b-41d4-a716-446655440000",
+                "nickname": "guest123456",
+                "expires_in": 28800
             }
         }
     )

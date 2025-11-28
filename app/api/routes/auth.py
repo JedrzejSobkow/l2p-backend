@@ -3,10 +3,12 @@
 from fastapi import APIRouter, Depends, Response, Request, Query
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
-from schemas.user_schema import UserRead, UserCreate, UserUpdate, UserLeaderboardRead
+from schemas.user_schema import UserRead, UserCreate, UserUpdate, GuestSessionResponse, UserLeaderboardRead
 from services.user_manager import get_user_manager, UserManager
+from services.guest_service import GuestService
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
+from infrastructure.redis_connection import get_redis
 from config.settings import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from infrastructure.postgres_connection import get_db_session
@@ -78,6 +80,39 @@ current_active_user = fastapi_users.current_user(active=True) #TODO verification
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 
+@auth_router.post("/guest/session", response_model=GuestSessionResponse, tags=["Authentication"])
+async def create_guest_session(
+    response: Response,
+):
+    """
+    Create a guest session with auto-generated nickname (guest{6digits})
+    
+    - No input required
+    - Returns guest_id and nickname
+    - Sets cookie 'l2p_guest' with guest_id
+    - Session expires after 8 hours
+    """
+    redis = get_redis()
+    
+    # Create guest session with auto-generated nickname
+    guest = await GuestService.create_guest_session(redis)
+    
+    # Set guest cookie
+    response.set_cookie(
+        key="l2p_guest",
+        value=guest.guest_id,
+        httponly=True,
+        max_age=GuestService.GUEST_SESSION_TTL,
+        samesite="lax"
+    )
+    
+    return GuestSessionResponse(
+        guest_id=guest.guest_id,
+        nickname=guest.nickname,
+        expires_in=GuestService.GUEST_SESSION_TTL
+    )
+
+
 @users_router.get("/leaderboard", response_model=list[UserLeaderboardRead])
 async def get_leaderboard(
     n: int = Query(default=10, ge=1, le=100, description="Number of top players to retrieve"),
@@ -104,6 +139,7 @@ async def get_leaderboard(
     
     return users
 
+@users_router.delete("/me", status_code=204, tags=["Users"])
 async def delete_current_user(
     response: Response,
     user: RegisteredUser = Depends(current_active_user),

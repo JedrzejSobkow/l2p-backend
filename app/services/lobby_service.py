@@ -45,9 +45,9 @@ class LobbyService:
         return f"{LobbyService.LOBBY_MEMBERS_KEY_PREFIX}{lobby_code}"
     
     @staticmethod
-    def _user_lobby_key(user_id: int) -> str:
-        """Get Redis key for user's current lobby"""
-        return f"{LobbyService.USER_LOBBY_KEY_PREFIX}{user_id}"
+    def _user_lobby_key(identifier: str) -> str:
+        """Get Redis key for user's/guest's current lobby"""
+        return f"{LobbyService.USER_LOBBY_KEY_PREFIX}{identifier}"
     
     @staticmethod
     def _lobby_messages_key(lobby_code: str) -> str:
@@ -62,7 +62,7 @@ class LobbyService:
     @staticmethod
     async def create_lobby(
         redis: Redis,
-        host_id: int,
+        host_identifier: str,
         host_nickname: str,
         host_pfp_path: Optional[str] = None,
         name: Optional[str] = None,
@@ -72,18 +72,14 @@ class LobbyService:
         game_rules: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Create a new lobby
+        Create a new lobby (works for both registered users and guests)
         
         Args:
             redis: Redis client
-            host_id: User ID of the host
+            host_identifier: Unique identifier (user:123 or guest:uuid)
             host_nickname: Nickname of the host
             host_pfp_path: Path to host's profile picture
             name: Optional custom lobby name (defaults to "Game: {lobby_code}")
-            max_players: Maximum number of players (2-6)
-            host_id: User ID of the host
-            host_nickname: Nickname of the host
-            host_pfp_path: Path to host's profile picture
             max_players: Maximum number of players (2-6)
             is_public: Whether lobby is public
             game_name: Optional pre-selected game
@@ -176,7 +172,7 @@ class LobbyService:
                         game_rules[rule_name] = rule_config.default
         
         # Check if user is already in a lobby
-        existing_lobby = await redis.get(LobbyService._user_lobby_key(host_id))
+        existing_lobby = await redis.get(LobbyService._user_lobby_key(host_identifier))
         if existing_lobby:
             raise BadRequestException(
                 message="You are already in a lobby",
@@ -243,7 +239,7 @@ class LobbyService:
         lobby_data = {
             "lobby_code": lobby_code,
             "name": lobby_name,
-            "host_id": host_id,
+            "host_identifier": host_identifier,
             "max_players": max_players,
             "is_public": is_public,
             "created_at": now.isoformat(),
@@ -253,7 +249,7 @@ class LobbyService:
         
         # Create host member data
         host_member = {
-            "user_id": host_id,
+            "identifier": host_identifier,
             "nickname": host_nickname,
             "pfp_path": host_pfp_path,
             "is_host": True,
@@ -286,20 +282,20 @@ class LobbyService:
             
             # Map user to lobby
             pipe.set(
-                LobbyService._user_lobby_key(host_id),
+                LobbyService._user_lobby_key(host_identifier),
                 lobby_code,
                 ex=LobbyService.LOBBY_TTL
             )
             
             await pipe.execute()
         
-        logger.info(f"Lobby '{lobby_name}' ({lobby_code}) created by user {host_id}" + 
+        logger.info(f"Lobby '{lobby_name}' ({lobby_code}) created by {host_identifier}" + 
                    (f" with game {game_name}" if game_name else ""))
         
         return {
             "lobby_code": lobby_code,
             "name": lobby_name,
-            "host_id": host_id,
+            "host_identifier": host_identifier,
             "max_players": max_players,
             "is_public": is_public,
             "current_players": 1,
@@ -359,17 +355,17 @@ class LobbyService:
     async def join_lobby(
         redis: Redis,
         lobby_code: str,
-        user_id: int,
+        user_identifier: str,
         user_nickname: str,
         user_pfp_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Join an existing lobby
+        Join an existing lobby (works for both registered users and guests)
         
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            user_id: User ID joining
+            user_identifier: Unique identifier (user:123 or guest:uuid)
             user_nickname: Nickname of the user
             user_pfp_path: Path to user's profile picture
             
@@ -381,7 +377,7 @@ class LobbyService:
             BadRequestException: If user already in lobby or lobby full
         """
         # Check if user is already in a lobby
-        existing_lobby = await redis.get(LobbyService._user_lobby_key(user_id))
+        existing_lobby = await redis.get(LobbyService._user_lobby_key(user_identifier))
         if existing_lobby:
             existing_code = existing_lobby.decode() if isinstance(existing_lobby, bytes) else existing_lobby
             if existing_code == lobby_code:
@@ -405,7 +401,7 @@ class LobbyService:
         
         # Create member data
         member = {
-            "user_id": user_id,
+            "identifier": user_identifier,
             "nickname": user_nickname,
             "pfp_path": user_pfp_path,
             "is_host": False,
@@ -420,13 +416,19 @@ class LobbyService:
                 {json.dumps(member): now.timestamp()}
             )
             pipe.set(
-                LobbyService._user_lobby_key(user_id),
+                LobbyService._user_lobby_key(user_identifier),
                 lobby_code,
                 ex=LobbyService.LOBBY_TTL
             )
             await pipe.execute()
         
-        logger.info(f"User {user_id} joined lobby {lobby_code}")
+        # Extend guest session TTL if this is a guest
+        if user_identifier.startswith("guest:"):
+            from services.guest_service import GuestService
+            guest_id = user_identifier.split(":", 1)[1]
+            await GuestService.extend_guest_session(redis, guest_id)
+        
+        logger.info(f"{user_identifier} joined lobby {lobby_code}")
         
         # Return updated lobby
         return await LobbyService.get_lobby(redis, lobby_code)
@@ -435,15 +437,15 @@ class LobbyService:
     async def leave_lobby(
         redis: Redis,
         lobby_code: str,
-        user_id: int
+        user_identifier: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Leave a lobby
+        Leave a lobby (works for both registered users and guests)
         
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            user_id: User ID leaving
+            user_identifier: Unique identifier (user:123 or guest:uuid)
             
         Returns:
             Dictionary with info about host transfer if occurred, or None if lobby closed
@@ -460,7 +462,7 @@ class LobbyService:
         # Find member
         member_to_remove = None
         for member in lobby["members"]:
-            if member["user_id"] == user_id:
+            if member["identifier"] == user_identifier:
                 member_to_remove = member
                 break
         
@@ -475,10 +477,10 @@ class LobbyService:
                 LobbyService._lobby_members_key(lobby_code),
                 json.dumps(member_to_remove)
             )
-            pipe.delete(LobbyService._user_lobby_key(user_id))
+            pipe.delete(LobbyService._user_lobby_key(user_identifier))
             await pipe.execute()
         
-        logger.info(f"User {user_id} left lobby {lobby_code}")
+        logger.info(f"{user_identifier} left lobby {lobby_code}")
         
         # Get updated member list
         members_raw = await redis.zrange(
@@ -510,22 +512,22 @@ class LobbyService:
                 {json.dumps(new_host): datetime.fromisoformat(new_host["joined_at"]).timestamp()}
             )
             
-            # Update lobby host_id
+            # Update lobby host_identifier
             lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
             lobby_data = json.loads(lobby_data_raw)
-            lobby_data["host_id"] = new_host["user_id"]
+            lobby_data["host_identifier"] = new_host["identifier"]
             await redis.set(
                 LobbyService._lobby_key(lobby_code),
                 json.dumps(lobby_data),
                 ex=LobbyService.LOBBY_TTL
             )
             
-            logger.info(f"Host transferred from {user_id} to {new_host['user_id']} in lobby {lobby_code}")
+            logger.info(f"Host transferred from {user_identifier} to {new_host['identifier']} in lobby {lobby_code}")
             
             return {
                 "host_transferred": True,
-                "old_host_id": user_id,
-                "new_host_id": new_host["user_id"],
+                "old_host_identifier": user_identifier,
+                "new_host_identifier": new_host["identifier"],
                 "new_host_nickname": new_host["nickname"],
             }
         
@@ -565,7 +567,7 @@ class LobbyService:
     async def update_lobby_name(
         redis: Redis,
         lobby_code: str,
-        user_id: int,
+        user_identifier: str,
         new_name: str
     ) -> Dict[str, Any]:
         """
@@ -574,7 +576,7 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            user_id: User ID requesting update
+            user_identifier: Identifier requesting update (user:123 or guest:uuid)
             new_name: New lobby name
             
         Returns:
@@ -606,7 +608,7 @@ class LobbyService:
             raise NotFoundException(message="Lobby not found")
         
         # Check if user is host
-        if lobby["host_id"] != user_id:
+        if lobby["host_identifier"] != user_identifier:
             raise ForbiddenException(message="Only the host can change the lobby name")
         
         # Check if name is the same
@@ -652,7 +654,7 @@ class LobbyService:
             
             await pipe.execute()
         
-        logger.info(f"Lobby {lobby_code} name updated from '{old_name}' to '{new_name}' by host {user_id}")
+        logger.info(f"Lobby {lobby_code} name updated from '{old_name}' to '{new_name}' by host {user_identifier}")
         
         return await LobbyService.get_lobby(redis, lobby_code)
     
@@ -660,7 +662,7 @@ class LobbyService:
     async def update_lobby_settings(
         redis: Redis,
         lobby_code: str,
-        user_id: int,
+        user_identifier: str,
         name: Optional[str] = None,
         max_players: Optional[int] = None,
         is_public: Optional[bool] = None
@@ -696,7 +698,7 @@ class LobbyService:
             raise NotFoundException(message="Lobby not found")
         
         # Check if user is host
-        if lobby["host_id"] != user_id:
+        if lobby["host_identifier"] != user_identifier:
             raise ForbiddenException(message="Only the host can update lobby settings")
         
         # Handle name update separately if provided
@@ -790,7 +792,7 @@ class LobbyService:
                 ex=LobbyService.LOBBY_TTL
             )
         
-        logger.info(f"Lobby {lobby_code} settings updated by host {user_id}: name={name}, max_players={max_players}, is_public={is_public}")
+        logger.info(f"Lobby {lobby_code} settings updated by host {user_identifier}: name={name}, max_players={max_players}, is_public={is_public}")
         
         return await LobbyService.get_lobby(redis, lobby_code)
     
@@ -798,8 +800,8 @@ class LobbyService:
     async def transfer_host(
         redis: Redis,
         lobby_code: str,
-        current_host_id: int,
-        new_host_id: int
+        current_host_identifier: str,
+        new_host_identifier: str
     ) -> Dict[str, Any]:
         """
         Transfer host privileges to another member
@@ -807,8 +809,8 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            current_host_id: Current host user ID
-            new_host_id: New host user ID
+            current_host_identifier: Current host identifier (user:123 or guest:uuid)
+            new_host_identifier: New host identifier (user:123 or guest:uuid)
             
         Returns:
             Dictionary with transfer details
@@ -824,7 +826,7 @@ class LobbyService:
             raise NotFoundException(message="Lobby not found")
         
         # Check if user is host
-        if lobby["host_id"] != current_host_id:
+        if lobby["host_identifier"] != current_host_identifier:
             raise ForbiddenException(message="Only the host can transfer host privileges")
         
         # Find both members
@@ -832,15 +834,15 @@ class LobbyService:
         new_host_member = None
         
         for member in lobby["members"]:
-            if member["user_id"] == current_host_id:
+            if member["identifier"] == current_host_identifier:
                 current_host_member = member
-            if member["user_id"] == new_host_id:
+            if member["identifier"] == new_host_identifier:
                 new_host_member = member
         
         if not new_host_member:
             raise BadRequestException(message="New host is not in this lobby")
         
-        if new_host_id == current_host_id:
+        if new_host_identifier == current_host_identifier:
             raise BadRequestException(message="You are already the host")
         
         # Update both members
@@ -870,37 +872,37 @@ class LobbyService:
             
             await pipe.execute()
         
-        # Update lobby host_id
+        # Update lobby host_identifier
         lobby_data_raw = await redis.get(LobbyService._lobby_key(lobby_code))
         lobby_data = json.loads(lobby_data_raw)
-        lobby_data["host_id"] = new_host_id
+        lobby_data["host_identifier"] = new_host_identifier
         await redis.set(
             LobbyService._lobby_key(lobby_code),
             json.dumps(lobby_data),
             ex=LobbyService.LOBBY_TTL
         )
         
-        logger.info(f"Host transferred from {current_host_id} to {new_host_id} in lobby {lobby_code}")
+        logger.info(f"Host transferred from {current_host_identifier} to {new_host_identifier} in lobby {lobby_code}")
         
         return {
-            "old_host_id": current_host_id,
-            "new_host_id": new_host_id,
+            "old_host_identifier": current_host_identifier,
+            "new_host_identifier": new_host_identifier,
             "new_host_nickname": new_host_member["nickname"],
         }
     
     @staticmethod
-    async def get_user_lobby(redis: Redis, user_id: int) -> Optional[str]:
+    async def get_user_lobby(redis: Redis, user_identifier: str) -> Optional[str]:
         """
         Get the lobby code a user is currently in
         
         Args:
             redis: Redis client
-            user_id: User ID
+            user_identifier: User identifier (user:id or guest:uuid)
             
         Returns:
             Lobby code or None
         """
-        lobby_code = await redis.get(LobbyService._user_lobby_key(user_id))
+        lobby_code = await redis.get(LobbyService._user_lobby_key(user_identifier))
         if lobby_code:
             return lobby_code.decode() if isinstance(lobby_code, bytes) else lobby_code
         return None
@@ -955,8 +957,8 @@ class LobbyService:
     async def kick_member(
         redis: Redis,
         lobby_code: str,
-        host_id: int,
-        user_id_to_kick: int
+        host_identifier: str,
+        identifier_to_kick: str
     ) -> Dict[str, Any]:
         """
         Kick a member from the lobby (host only)
@@ -964,8 +966,8 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            host_id: Host user ID
-            user_id_to_kick: User ID to kick
+            host_identifier: Host identifier (user:123 or guest:uuid)
+            identifier_to_kick: Identifier to kick (user:123 or guest:uuid)
             
         Returns:
             Dictionary with kicked member info
@@ -981,17 +983,17 @@ class LobbyService:
             raise NotFoundException(message="Lobby not found")
         
         # Check if user is host
-        if lobby["host_id"] != host_id:
+        if lobby["host_identifier"] != host_identifier:
             raise ForbiddenException(message="Only the host can kick members")
         
         # Cannot kick yourself
-        if user_id_to_kick == host_id:
+        if identifier_to_kick == host_identifier:
             raise BadRequestException(message="You cannot kick yourself")
         
         # Find member to kick
         member_to_kick = None
         for member in lobby["members"]:
-            if member["user_id"] == user_id_to_kick:
+            if member["identifier"] == identifier_to_kick:
                 member_to_kick = member
                 break
         
@@ -1004,13 +1006,13 @@ class LobbyService:
                 LobbyService._lobby_members_key(lobby_code),
                 json.dumps(member_to_kick)
             )
-            pipe.delete(LobbyService._user_lobby_key(user_id_to_kick))
+            pipe.delete(LobbyService._user_lobby_key(identifier_to_kick))
             await pipe.execute()
         
-        logger.info(f"User {user_id_to_kick} kicked from lobby {lobby_code} by host {host_id}")
+        logger.info(f"{identifier_to_kick} kicked from lobby {lobby_code} by host {host_identifier}")
         
         return {
-            "user_id": user_id_to_kick,
+            "identifier": identifier_to_kick,
             "nickname": member_to_kick["nickname"]
         }
     
@@ -1051,7 +1053,7 @@ class LobbyService:
                 pipe.delete(LobbyService._lobby_name_to_code_key(lobby_name))
             
             for member in members:
-                pipe.delete(LobbyService._user_lobby_key(member["user_id"]))
+                pipe.delete(LobbyService._user_lobby_key(member["identifier"]))
             
             await pipe.execute()
         
@@ -1064,7 +1066,7 @@ class LobbyService:
     async def toggle_ready(
         redis: Redis,
         lobby_code: str,
-        user_id: int
+        user_identifier: str
     ) -> Dict[str, Any]:
         """
         Toggle ready status for a member in the lobby
@@ -1072,7 +1074,7 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            user_id: User ID of the member
+            user_identifier: Unique identifier (user:123 or guest:uuid)
             
         Returns:
             Dictionary with updated member info and new ready status
@@ -1101,7 +1103,7 @@ class LobbyService:
         
         for member_json, score in members_raw:
             member = json.loads(member_json)
-            if member["user_id"] == user_id:
+            if member["identifier"] == user_identifier:
                 member_to_update = member
                 member_score = score
                 break
@@ -1109,7 +1111,7 @@ class LobbyService:
         if not member_to_update:
             raise NotFoundException(
                 message="You are not a member of this lobby",
-                details={"user_id": user_id, "lobby_code": lobby_code}
+                details={"identifier": user_identifier, "lobby_code": lobby_code}
             )
         
         # Toggle ready status
@@ -1135,10 +1137,10 @@ class LobbyService:
             
             await pipe.execute()
         
-        logger.info(f"User {user_id} toggled ready to {new_ready_status} in lobby {lobby_code}")
+        logger.info(f"{user_identifier} toggled ready to {new_ready_status} in lobby {lobby_code}")
         
         return {
-            "user_id": user_id,
+            "identifier": user_identifier,
             "nickname": member_to_update["nickname"],
             "is_ready": new_ready_status,
             "lobby_code": lobby_code
@@ -1148,7 +1150,7 @@ class LobbyService:
     async def save_lobby_message(
         redis: Redis,
         lobby_code: str,
-        user_id: int,
+        user_identifier: str,
         user_nickname: str,
         user_pfp_path: Optional[str],
         content: str
@@ -1188,21 +1190,21 @@ class LobbyService:
         is_member = False
         for member_json in members_raw:
             member = json.loads(member_json)
-            if member["user_id"] == user_id:
+            if member["identifier"] == user_identifier:
                 is_member = True
                 break
         
         if not is_member:
             raise BadRequestException(
                 message="You are not a member of this lobby",
-                details={"user_id": user_id, "lobby_code": lobby_code}
+                details={"identifier": user_identifier, "lobby_code": lobby_code}
             )
         
         now = datetime.now(UTC)
         
         # Create message data
         message_data = {
-            "user_id": user_id,
+            "identifier": user_identifier,
             "nickname": user_nickname,
             "pfp_path": user_pfp_path,
             "content": content,
@@ -1232,7 +1234,7 @@ class LobbyService:
             
             await pipe.execute()
         
-        logger.info(f"User {user_id} sent message to lobby {lobby_code}")
+        logger.info(f"{user_identifier} sent message to lobby {lobby_code}")
         
         return {
             **message_data,
@@ -1286,7 +1288,7 @@ class LobbyService:
     async def select_game(
         redis: Redis,
         lobby_code: str,
-        host_id: int,
+        host_identifier: str,
         game_name: str
     ) -> Dict[str, Any]:
         """
@@ -1295,7 +1297,7 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            host_id: User ID of the host (for authorization)
+            host_identifier: Identifier of the host (user:123 or guest:uuid)
             game_name: Name of the game to select
             
         Returns:
@@ -1315,10 +1317,10 @@ class LobbyService:
             )
         
         # Check if user is host
-        if lobby["host_id"] != host_id:
+        if lobby["host_identifier"] != host_identifier:
             raise ForbiddenException(
                 message="Only the host can select a game",
-                details={"host_id": lobby["host_id"]}
+                details={"host_identifier": lobby["host_identifier"]}
             )
         
         # Validate game name
@@ -1389,16 +1391,15 @@ class LobbyService:
     async def update_game_rules(
         redis: Redis,
         lobby_code: str,
-        host_id: int,
+        host_identifier: str,
         rules: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Update game rules in the lobby (host only)
-        
-        Args:
+        \n        Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            host_id: User ID of the host (for authorization)
+            host_identifier: Identifier of the host (user:123 or guest:uuid)
             rules: Dictionary of rules to update
             
         Returns:
@@ -1418,10 +1419,10 @@ class LobbyService:
             )
         
         # Check if user is host
-        if lobby["host_id"] != host_id:
+        if lobby["host_identifier"] != host_identifier:
             raise ForbiddenException(
                 message="Only the host can update game rules",
-                details={"host_id": lobby["host_id"]}
+                details={"host_identifier": lobby["host_identifier"]}
             )
         
         # Check if game is selected
@@ -1509,7 +1510,7 @@ class LobbyService:
     async def clear_game_selection(
         redis: Redis,
         lobby_code: str,
-        host_id: int
+        host_identifier: str
     ) -> Dict[str, Any]:
         """
         Clear game selection (allows selecting a different game)
@@ -1518,7 +1519,7 @@ class LobbyService:
         Args:
             redis: Redis client
             lobby_code: 6-character lobby code
-            host_id: User ID of the host (for authorization)
+            host_identifier: Identifier of the host (for authorization)
             
         Returns:
             Dictionary with updated lobby info
@@ -1536,10 +1537,10 @@ class LobbyService:
             )
         
         # Check if user is host
-        if lobby["host_id"] != host_id:
+        if lobby["host_identifier"] != host_identifier:
             raise ForbiddenException(
                 message="Only the host can clear game selection",
-                details={"host_id": lobby["host_id"]}
+                details={"host_identifier": lobby["host_identifier"]}
             )
         
         # Update lobby data

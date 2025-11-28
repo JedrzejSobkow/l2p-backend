@@ -22,13 +22,13 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TEST123",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         assert result["lobby_code"] == "TEST123"
         assert result["game_name"] == "tictactoe"
         assert "game_state" in result
-        assert result["current_turn_player_id"] == 1
+        assert result["current_turn_identifier"] == "user:1"
         
         # Verify data is stored in Redis
         game_state = await redis_client.get(GameService._game_state_key("TEST123"))
@@ -43,7 +43,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TEST456",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={"board_size": 4, "win_length": 4}
         )
         
@@ -57,7 +57,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TEST789",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         with pytest.raises(BadRequestException, match="already in progress"):
@@ -65,7 +65,7 @@ class TestGameService:
                 redis=redis_client,
                 lobby_code="TEST789",
                 game_name="tictactoe",
-                player_ids=[1, 2]
+                identifiers=[f"user:{id}" for id in [1, 2]]
             )
     
     async def test_create_game_replace_finished_game(self, redis_client):
@@ -75,14 +75,14 @@ class TestGameService:
             redis=redis_client,
             lobby_code="REPLACE1",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Forfeit to finish it
         await GameService.forfeit_game(
             redis=redis_client,
             lobby_code="REPLACE1",
-            player_id=1
+            identifier="user:1"
         )
         
         # Now create a new game with the same lobby code
@@ -90,13 +90,13 @@ class TestGameService:
             redis=redis_client,
             lobby_code="REPLACE1",
             game_name="tictactoe",
-            player_ids=[3, 4]
+            identifiers=[f"user:{id}" for id in [3, 4]]
         )
         
         assert result["lobby_code"] == "REPLACE1"
         # Should have new players
         game = await GameService.get_game(redis_client, "REPLACE1")
-        assert game["engine_config"]["player_ids"] == [3, 4]
+        assert game["engine_config"]["identifiers"] == ["user:3", "user:4"]
         assert game["game_state"]["result"] == GameResult.IN_PROGRESS.value
             
     async def test_create_game_invalid_game_name(self, redis_client):
@@ -106,7 +106,7 @@ class TestGameService:
                 redis=redis_client,
                 lobby_code="TEST999",
                 game_name="invalid_game",
-                player_ids=[1, 2]
+                identifiers=[f"user:{id}" for id in [1, 2]]
             )
     
     async def test_create_game_invalid_rules(self, redis_client):
@@ -117,7 +117,7 @@ class TestGameService:
                 redis=redis_client,
                 lobby_code="INVALID1",
                 game_name="tictactoe",
-                player_ids=[1, 2, 3]  # Too many players
+                identifiers=[f"user:{id}" for id in [1, 2, 3]]  # Too many players
             )
     
     # ============================================================================
@@ -131,7 +131,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="GETTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Get game
@@ -158,21 +158,21 @@ class TestGameService:
             redis=redis_client,
             lobby_code="MOVETEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Make move
         result = await GameService.make_move(
             redis=redis_client,
             lobby_code="MOVETEST",
-            player_id=1,
+            identifier="user:1",
             move_data={"row": 0, "col": 0}
         )
         
         assert result["game_state"]["board"][0][0] == "X"
         assert result["game_state"]["move_count"] == 1
         assert result["result"] == GameResult.IN_PROGRESS.value
-        assert result["current_turn_player_id"] == 2  # Turn advanced
+        assert result["current_turn_identifier"] == "user:2"  # Turn advanced
         
     async def test_make_move_wrong_turn(self, redis_client):
         """Test making a move when it's not player's turn"""
@@ -181,7 +181,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TURNTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Try to make move as player 2 (but it's player 1's turn)
@@ -189,7 +189,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="TURNTEST",
-                player_id=2,
+                identifier="user:2",
                 move_data={"row": 0, "col": 0}
             )
             
@@ -200,14 +200,14 @@ class TestGameService:
             redis=redis_client,
             lobby_code="INVALIDTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Try to make move to occupied position
         await GameService.make_move(
             redis=redis_client,
             lobby_code="INVALIDTEST",
-            player_id=1,
+            identifier="user:1",
             move_data={"row": 0, "col": 0}
         )
         
@@ -216,7 +216,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="INVALIDTEST",
-                player_id=2,
+                identifier="user:2",
                 move_data={"row": 0, "col": 0}
             )
     
@@ -226,7 +226,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="NOEXIST",
-                player_id=1,
+                identifier="user:1",
                 move_data={"row": 0, "col": 0}
             )
     
@@ -236,7 +236,7 @@ class TestGameService:
         engine_config = {
             "game_name": "tictactoe",
             "lobby_code": "NOSTATE",
-            "player_ids": [1, 2],
+            "identifiers": [1, 2],
             "rules": {},
             "current_turn_index": 0,
         }
@@ -250,7 +250,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="NOSTATE",
-                player_id=1,
+                identifier="user:1",
                 move_data={"row": 0, "col": 0}
             )
     
@@ -265,7 +265,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="WINTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Play moves to create a win for player 1
@@ -283,7 +283,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="WINTEST",
-                player_id=player_id,
+                identifier=f"user:{player_id}",
                 move_data=move_data
             )
         
@@ -291,12 +291,12 @@ class TestGameService:
         result = await GameService.make_move(
             redis=redis_client,
             lobby_code="WINTEST",
-            player_id=1,
+            identifier="user:1",
             move_data={"row": 2, "col": 2}
         )
         
         assert result["result"] == GameResult.PLAYER_WIN.value
-        assert result["winner_id"] == 1
+        assert result["winner_identifier"] == "user:1"
         
     async def test_game_draw_detection(self, redis_client):
         """Test that game detects draw condition"""
@@ -305,7 +305,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="DRAWTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Play moves to create a draw
@@ -329,12 +329,12 @@ class TestGameService:
             result = await GameService.make_move(
                 redis=redis_client,
                 lobby_code="DRAWTEST",
-                player_id=player_id,
+                identifier=f"user:{player_id}",
                 move_data=move_data
             )
         
         assert result["result"] == GameResult.DRAW.value
-        assert result["winner_id"] is None
+        assert result["winner_identifier"] is None
     
     # ============================================================================
     # TIMEOUT TESTS
@@ -347,7 +347,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TIMEOUT1",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -373,7 +373,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="TIMEOUT1",
-                player_id=1,
+                identifier="user:1",
                 move_data={"row": 0, "col": 0}
             )
         
@@ -388,7 +388,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TIMEOUT2",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -414,13 +414,13 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="TIMEOUT2",
-                player_id=1,
+                identifier="user:1",
                 move_data={"row": 0, "col": 0}
             )
         
         # Verify turn advanced to player 2
         game = await GameService.get_game(redis_client, "TIMEOUT2")
-        assert game["game_state"]["current_turn_player_id"] == 2
+        assert game["game_state"]["current_turn_identifier"] == "user:2"
         assert game["game_state"]["result"] == GameResult.IN_PROGRESS.value
     
     # ============================================================================
@@ -434,19 +434,19 @@ class TestGameService:
             redis=redis_client,
             lobby_code="FORFTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Player 1 forfeits
         result = await GameService.forfeit_game(
             redis=redis_client,
             lobby_code="FORFTEST",
-            player_id=1
+            identifier="user:1"
         )
         
         assert result["result"] == GameResult.FORFEIT.value
-        assert result["winner_id"] == 2
-        assert result["game_state"]["forfeited_by"] == 1
+        assert result["winner_identifier"] == "user:2"
+        assert result["game_state"]["forfeited_by"] == "user:1"
     
     async def test_forfeit_game_not_found(self, redis_client):
         """Test forfeiting when game doesn't exist"""
@@ -454,7 +454,7 @@ class TestGameService:
             await GameService.forfeit_game(
                 redis=redis_client,
                 lobby_code="NOEXIST",
-                player_id=1
+                identifier="user:1"
             )
     
     async def test_forfeit_game_state_not_found(self, redis_client):
@@ -463,7 +463,7 @@ class TestGameService:
         engine_config = {
             "game_name": "tictactoe",
             "lobby_code": "FORFSTATE",
-            "player_ids": [1, 2],
+            "identifiers": [1, 2],
             "rules": {},
             "current_turn_index": 0,
         }
@@ -477,8 +477,146 @@ class TestGameService:
             await GameService.forfeit_game(
                 redis=redis_client,
                 lobby_code="FORFSTATE",
-                player_id=1
+                identifier="user:1"
             )
+    
+    # ============================================================================
+    # HANDLE PLAYER LEFT TESTS
+    # ============================================================================
+    
+    async def test_handle_player_left_success(self, redis_client):
+        """Test handling player leaving during an active game"""
+        # Create game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTEST",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]]
+        )
+        
+        # Player 1 leaves
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTEST",
+            identifier="user:1"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:2"
+        assert result["game_state"]["left_by"] == "user:1"
+        assert result["game_state"]["result"] == GameResult.PLAYER_LEFT.value
+        
+        # Verify state is saved
+        game = await GameService.get_game(redis_client, "LEFTTEST")
+        assert game["game_state"]["result"] == GameResult.PLAYER_LEFT.value
+        assert game["game_state"]["winner_identifier"] == "user:2"
+        assert game["game_state"]["left_by"] == "user:1"
+    
+    async def test_handle_player_left_with_timeout(self, redis_client):
+        """Test that timeout key is cleared when player leaves"""
+        # Create game with timeout
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTIMEOUT",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]],
+            rules={
+                "timeout_type": "per_turn",
+                "timeout_seconds": 30,
+                "timeout_action": "skip_turn"
+            }
+        )
+        
+        # Verify timeout key exists (set during game creation)
+        from services.timeout_checker import TimeoutChecker
+        timeout_key = TimeoutChecker.get_timeout_key("LEFTTIMEOUT")
+        timeout_exists = await redis_client.exists(timeout_key)
+        assert timeout_exists == 1
+        
+        # Player 1 leaves
+        await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTIMEOUT",
+            identifier="user:1"
+        )
+        
+        # Timeout key should be cleared
+        timeout_exists = await redis_client.exists(timeout_key)
+        assert timeout_exists == 0
+    
+    async def test_handle_player_left_game_not_found(self, redis_client):
+        """Test handling player left when game doesn't exist"""
+        with pytest.raises(NotFoundException, match="Game not found"):
+            await GameService.handle_player_left(
+                redis=redis_client,
+                lobby_code="NOEXIST",
+                identifier="user:1"
+            )
+    
+    async def test_handle_player_left_state_not_found(self, redis_client):
+        """Test handling player left when engine exists but state is missing"""
+        # Create only engine config
+        engine_config = {
+            "game_name": "tictactoe",
+            "lobby_code": "LEFTSTATE",
+            "identifiers": [1, 2],
+            "rules": {},
+            "current_turn_index": 0,
+        }
+        
+        await redis_client.set(
+            GameService._game_engine_key("LEFTSTATE"),
+            json.dumps(engine_config)
+        )
+        
+        with pytest.raises(NotFoundException, match="Game state not found"):
+            await GameService.handle_player_left(
+                redis=redis_client,
+                lobby_code="LEFTSTATE",
+                identifier="user:1"
+            )
+    
+    async def test_handle_player_left_second_player(self, redis_client):
+        """Test handling when second player leaves"""
+        # Create game
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTTEST2",
+            game_name="tictactoe",
+            identifiers=[f"user:{id}" for id in [1, 2]]
+        )
+        
+        # Player 2 leaves (not current turn player)
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTTEST2",
+            identifier="user:2"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:1"
+        assert result["game_state"]["left_by"] == "user:2"
+    
+    async def test_handle_player_left_guest_player(self, redis_client):
+        """Test handling when a guest player leaves"""
+        # Create game with guest
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="LEFTGUEST",
+            game_name="tictactoe",
+            identifiers=["guest:abc123", "user:1"]
+        )
+        
+        # Guest leaves
+        result = await GameService.handle_player_left(
+            redis=redis_client,
+            lobby_code="LEFTGUEST",
+            identifier="guest:abc123"
+        )
+        
+        assert result["result"] == GameResult.PLAYER_LEFT.value
+        assert result["winner_identifier"] == "user:1"
+        assert result["game_state"]["left_by"] == "guest:abc123"
     
     # ============================================================================
     # TIMING INFO TESTS
@@ -491,7 +629,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TIMING1",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "total_time",
                 "timeout_seconds": 300
@@ -503,10 +641,10 @@ class TestGameService:
         assert timing_info is not None
         assert timing_info["timeout_type"] == "total_time"
         assert timing_info["timeout_seconds"] == 300
-        assert timing_info["current_player_id"] == 1
+        assert timing_info["current_identifier"] == "user:1"
         assert "player_time_remaining" in timing_info
-        assert "1" in timing_info["player_time_remaining"]
-        assert "2" in timing_info["player_time_remaining"]
+        assert "user:1" in timing_info["player_time_remaining"]
+        assert "user:2" in timing_info["player_time_remaining"]
     
     async def test_get_timing_info_no_timeout(self, redis_client):
         """Test getting timing info for game without timeout"""
@@ -514,7 +652,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="TIMING2",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         timing_info = await GameService.get_timing_info(redis_client, "TIMING2")
@@ -534,7 +672,7 @@ class TestGameService:
         engine_config = {
             "game_name": "tictactoe",
             "lobby_code": "TIMINGNOSTATE",
-            "player_ids": [1, 2],
+            "identifiers": [1, 2],
             "rules": {},
             "current_turn_index": 0,
         }
@@ -558,7 +696,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="SETKEY1",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 60
@@ -577,7 +715,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="SETKEY2",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Check that timeout key doesn't exist
@@ -593,7 +731,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="SETKEY3",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "total_time",
                 "timeout_seconds": 10
@@ -603,7 +741,7 @@ class TestGameService:
         # Manually set player's remaining time to 0
         state_raw = await redis_client.get(GameService._game_state_key("SETKEY3"))
         game_state = json.loads(state_raw)
-        game_state["timing"]["player_time_remaining"]["1"] = 0
+        game_state["timing"]["player_time_remaining"]["user:1"] = 0
         
         await redis_client.set(
             GameService._game_state_key("SETKEY3"),
@@ -632,7 +770,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="CLEARKEY1",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 60
@@ -659,7 +797,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="FINISH1",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 60
@@ -676,7 +814,7 @@ class TestGameService:
         await GameService.forfeit_game(
             redis=redis_client,
             lobby_code="FINISH1",
-            player_id=1
+            identifier="user:1"
         )
         
         # Verify timeout key is cleared
@@ -690,7 +828,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="WIN_TIMEOUT",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 60
@@ -710,7 +848,7 @@ class TestGameService:
             await GameService.make_move(
                 redis=redis_client,
                 lobby_code="WIN_TIMEOUT",
-                player_id=player_id,
+                identifier=f"user:{player_id}",
                 move_data=move_data
             )
         
@@ -727,7 +865,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="UPDATE_TIMEOUT",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "total_time",
                 "timeout_seconds": 300
@@ -738,7 +876,7 @@ class TestGameService:
         await GameService.make_move(
             redis=redis_client,
             lobby_code="UPDATE_TIMEOUT",
-            player_id=1,
+            identifier="user:1",
             move_data={"row": 0, "col": 0}
         )
         
@@ -763,7 +901,7 @@ class TestGameService:
         invalid_config = {
             "game_name": "unknown_game_type",
             "lobby_code": "CORRUPT",
-            "player_ids": [1, 2],
+            "identifiers": [1, 2],
             "rules": {},
             "current_turn_index": 0,
         }
@@ -787,7 +925,7 @@ class TestGameService:
             redis=redis_client,
             lobby_code="DELTEST",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Verify it exists
@@ -811,6 +949,57 @@ class TestGameService:
         
         assert isinstance(games, list)
         assert "tictactoe" in games
+
+@pytest.mark.asyncio
+async def test_create_game_extends_guest_session(redis_client):
+    """Test that create_game extends guest session TTL for guests"""
+    from unittest.mock import AsyncMock, patch
+    from services.guest_service import GuestService
+    
+    test_guest_identifier = "guest:abc123"
+    
+    # Mock GuestService.extend_guest_session
+    with patch.object(GuestService, 'extend_guest_session', new_callable=AsyncMock) as mock_extend:
+        # Create game with a guest player
+        await GameService.create_game(
+            redis=redis_client,
+            lobby_code="GUEST1",
+            game_name="tictactoe",
+            identifiers=[test_guest_identifier, "user:456"]
+        )
+        
+        # Should extend guest session (with just the ID part, not the prefix)
+        mock_extend.assert_called_once_with(redis_client, "abc123")
+
+
+@pytest.mark.asyncio
+async def test_make_move_extends_guest_session(redis_client):
+    """Test that make_move extends guest session TTL for guests"""
+    from unittest.mock import AsyncMock, patch
+    from services.guest_service import GuestService
+    
+    test_guest_identifier = "guest:abc123"
+    
+    # Create a game with guest
+    await GameService.create_game(
+        redis=redis_client,
+        lobby_code="GUEST2",
+        game_name="tictactoe",
+        identifiers=[test_guest_identifier, "user:456"]
+    )
+    
+    # Mock GuestService.extend_guest_session
+    with patch.object(GuestService, 'extend_guest_session', new_callable=AsyncMock) as mock_extend:
+        # Make move as guest
+        await GameService.make_move(
+            redis=redis_client,
+            lobby_code="GUEST2",
+            identifier=test_guest_identifier,
+            move_data={"row": 0, "col": 0}
+        )
+        
+        # Should extend guest session (with just the ID part, not the prefix)
+        mock_extend.assert_called_once_with(redis_client, "abc123")
     
     # ============================================================================
     # UPDATE PLAYER ELOS TESTS

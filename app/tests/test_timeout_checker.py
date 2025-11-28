@@ -88,7 +88,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="TIMEOUT_END",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -112,7 +112,7 @@ class TestTimeoutChecker:
         # Verify game ended
         game = await GameService.get_game(redis_client, "TIMEOUT_END")
         assert game["game_state"]["result"] == GameResult.TIMEOUT.value
-        assert game["game_state"]["winner_id"] == 2  # Player 2 wins (player 1 timed out)
+        assert game["game_state"]["winner_identifier"] == "user:2"  # Player 2 wins (player 1 timed out)
         
         # Verify SocketIO emit was called
         assert sio_mock.emit.called
@@ -131,7 +131,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="TIMEOUT_SKIP",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -155,7 +155,7 @@ class TestTimeoutChecker:
         # Verify turn was skipped (game still in progress, turn advanced)
         game = await GameService.get_game(redis_client, "TIMEOUT_SKIP")
         assert game["game_state"]["result"] == GameResult.IN_PROGRESS.value
-        assert game["game_state"]["current_turn_player_id"] == 2  # Turn advanced to player 2
+        assert game["game_state"]["current_turn_player_identifier"] == "user:2"  # Turn advanced to player 2
         
         # Verify SocketIO emit was called with move_made event
         assert sio_mock.emit.called
@@ -213,12 +213,12 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="ALREADY_ENDED",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         await GameService.forfeit_game(
             redis=redis_client,
             lobby_code="ALREADY_ENDED",
-            player_id=1
+            identifier=f"user:1"
         )
         
         # Try to handle timeout on already ended game
@@ -237,7 +237,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="NO_TIMEOUT",
             game_name="tictactoe",
-            player_ids=[1, 2]
+            identifiers=[f"user:{id}" for id in [1, 2]]
         )
         
         # Try to handle timeout (but no timeout is configured)
@@ -257,7 +257,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="EXCEPTION_TEST",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -296,7 +296,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="EVENT_TEST",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -325,7 +325,7 @@ class TestTimeoutChecker:
         assert event_data["lobby_code"] == "EVENT_TEST"
         assert "result" in event_data
         assert event_data["result"] == GameResult.TIMEOUT.value
-        assert "winner_id" in event_data
+        assert "winner_identifier" in event_data
         assert "game_state" in event_data
     
     async def test_move_made_event_structure_on_skip(self, redis_client):
@@ -338,7 +338,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="SKIP_EVENT_TEST",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -365,12 +365,12 @@ class TestTimeoutChecker:
         
         assert "lobby_code" in event_data
         assert event_data["lobby_code"] == "SKIP_EVENT_TEST"
-        assert "player_id" in event_data
+        assert "identifier" in event_data
         assert "move_data" in event_data
         assert event_data["move_data"]["skipped"] is True
         assert event_data["move_data"]["reason"] == "timeout"
         assert "game_state" in event_data
-        assert "current_turn_player_id" in event_data
+        assert "current_turn_identifier" in event_data
     
     # ============================================================================
     # INTEGRATION TESTS WITH TIMEOUT KEY
@@ -386,7 +386,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="CLEAR_KEY_TEST",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -426,7 +426,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="NEW_KEY_TEST",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 60,
@@ -466,7 +466,7 @@ class TestTimeoutChecker:
             redis=redis_client,
             lobby_code="MULTI_TIMEOUT",
             game_name="tictactoe",
-            player_ids=[1, 2],
+            identifiers=[f"user:{id}" for id in [1, 2]],
             rules={
                 "timeout_type": "per_turn",
                 "timeout_seconds": 10,  # Use valid value from allowed list
@@ -726,3 +726,45 @@ class TestTimeoutChecker:
                     # Cleanup should still happen
                     mock_pubsub.unsubscribe.assert_called_once()
                     mock_pubsub.close.assert_called_once()
+
+    async def test_handle_timeout_missing_game_engine(self, redis_client):
+        """Test early return in _handle_timeout when engine is not found (line 87-88)"""
+        from unittest.mock import AsyncMock, patch
+        
+        sio_mock = AsyncMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        lobby_code = "NO_ENGINE"
+        
+        # Mock _load_engine to return None
+        with patch.object(GameService, '_load_engine', new_callable=AsyncMock) as mock_load:
+            mock_load.return_value = None  # Engine not found
+            
+            # Should return early without error
+            await checker._handle_timeout(lobby_code)
+            
+            # Should not try to emit any events
+            sio_mock.emit.assert_not_called()
+
+    async def test_handle_timeout_missing_game_state(self, redis_client):
+        """Test early return in _handle_timeout when game state is not found (line 95-96)"""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        
+        sio_mock = AsyncMock()
+        checker = TimeoutChecker(redis_client, sio_mock)
+        
+        lobby_code = "NO_STATE"
+        
+        # Mock _load_engine to return a valid engine
+        mock_engine = MagicMock()
+        
+        with patch.object(GameService, '_load_engine', new_callable=AsyncMock) as mock_load:
+            mock_load.return_value = mock_engine
+            
+            # Don't set any game state in Redis (state_raw will be None at line 92)
+            
+            # Should return early without error
+            await checker._handle_timeout(lobby_code)
+            
+            # Should not try to emit any events
+            sio_mock.emit.assert_not_called()
