@@ -636,7 +636,8 @@ class GameService:
     @staticmethod
     async def update_player_elos(redis: Redis, lobby_code: str, game_state: dict):
         """
-        Update ELO scores for players after game end.
+        Update ELO scores for registered players after game end.
+        Only updates ELO for registered users (identifier starting with "user:"), not guests.
         Supports multi-player games with variable adjustments.
         
         Args:
@@ -645,13 +646,38 @@ class GameService:
             game_state: The final game state containing winner information
         """
         try:
-            # Get game engine to calculate adjustment
+            # Get game engine to get player identifiers
             engine = await GameService._load_engine(redis, lobby_code)
             if not engine:
                 return
             
-            # Calculate adjustments for all players
-            adjustments = engine.calculate_elo_adjustments(game_state)
+            # Get winner identifier from game state
+            winner_identifier = game_state.get("winner_identifier")
+            
+            if not winner_identifier:
+                # No winner (e.g., draw), no ELO changes
+                return
+            
+            # Calculate adjustments based on identifiers
+            # Winner gets +1, losers get -1
+            adjustments = {}
+            for identifier in engine.player_ids:  # player_ids actually contains identifiers (strings)
+                # Only update ELO for registered users, skip guests
+                if not identifier.startswith("user:"):
+                    continue
+                
+                # Extract user ID from identifier (e.g., "user:123" -> 123)
+                try:
+                    user_id = int(identifier.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid user identifier format: {identifier}")
+                    continue
+                
+                # Determine adjustment
+                if identifier == winner_identifier:
+                    adjustments[user_id] = 1
+                else:
+                    adjustments[user_id] = -1
             
             if not adjustments:
                 return
@@ -662,13 +688,10 @@ class GameService:
             from models.registered_user import RegisteredUser
             
             async with postgres_connection.session_factory() as session:
-                for player_id, adjustment in adjustments.items():
-                    if adjustment == 0:
-                        continue
-                        
+                for user_id, adjustment in adjustments.items():
                     await session.execute(
                         update(RegisteredUser)
-                        .where(RegisteredUser.id == player_id)
+                        .where(RegisteredUser.id == user_id)
                         .values(elo=RegisteredUser.elo + adjustment)
                     )
                 
