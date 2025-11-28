@@ -119,10 +119,10 @@ class GameNamespace(GuestAuthNamespace):
                 )
             
             # Check if user is the host
-            if lobby["host_id"] != identifier:
+            if lobby["host_identifier"] != identifier:
                 raise ForbiddenException(
                     message="Only the lobby host can start a game",
-                    details={"lobby_code": lobby_code, "host_id": lobby["host_id"]}
+                    details={"lobby_code": lobby_code, "host_identifier": lobby["host_identifier"]}
                 )
             
             # Determine game_name and rules
@@ -151,7 +151,7 @@ class GameNamespace(GuestAuthNamespace):
                 )
             
             # Get player IDs from lobby members
-            player_ids = [member["user_id"] for member in lobby["members"]]
+            player_ids = [member["user_identifier"] for member in lobby["members"]]
             
             # Create the game
             game_result = await GameService.create_game(
@@ -164,8 +164,8 @@ class GameNamespace(GuestAuthNamespace):
             
             # Join all lobby members to the game room
             for member in lobby["members"]:
-                member_identifier = member["user_id"]
-                member_sessions = manager.get_user_sessions(namespace="/game", identifier=member_identifier)
+                member_identifier = member["user_identifier"]
+                member_sessions = manager.get_identifier_sessions(namespace='/game', identifier=member_identifier)
                 for member_sid in member_sessions:
                     await self.enter_room(member_sid, lobby_code)
                     logger.info(f"Added user {member_identifier} (sid: {member_sid}) to game room {lobby_code}")
@@ -176,7 +176,7 @@ class GameNamespace(GuestAuthNamespace):
                 game_name=game_result["game_name"],
                 game_state=game_result["game_state"],
                 game_info=game_result["game_info"],
-                current_turn_player_id=game_result["current_turn_player_id"]
+                current_turn_player_identifier=game_result["current_turn_player_identifier"]
             )
             # await self.emit("game_started", event.model_dump(mode='json'), room=sid)
             
@@ -253,17 +253,17 @@ class GameNamespace(GuestAuthNamespace):
             move_result = await GameService.make_move(
                 redis=redis,
                 lobby_code=lobby_code,
-                player_id=identifier,
+                identifier=identifier,
                 move_data=request.move_data
             )
             
             # Broadcast move to all players in the room
             move_event = MoveMadeEvent(
                 lobby_code=lobby_code,
-                player_id=identifier,
+                identifier=identifier,
                 move_data=request.move_data,
                 game_state=move_result["game_state"],
-                current_turn_player_id=move_result.get("current_turn_player_id")
+                current_turn_player_identifier=move_result.get("current_turn_player_identifier")
             )
             await self.emit("move_made", move_event.model_dump(mode='json'), room=lobby_code)
             
@@ -272,7 +272,7 @@ class GameNamespace(GuestAuthNamespace):
                 end_event = GameEndedEvent(
                     lobby_code=lobby_code,
                     result=move_result["result"],
-                    winner_id=move_result["winner_id"],
+                    winner_identifier=move_result["winner_identifier"],
                     game_state=move_result["game_state"]
                 )
                 await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)

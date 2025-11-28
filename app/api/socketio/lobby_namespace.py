@@ -836,15 +836,17 @@ class LobbyNamespace(GuestAuthNamespace):
                 identifier_to_kick=request.identifier
             )
             
-            # Get kicked user's sid to force disconnect from lobby room
-            kicked_sid = manager.get_sid_by_identifier(request.identifier, namespace='/lobby')
-            if kicked_sid:
-                await self.leave_room(kicked_sid, lobby_code)
-                # Notify kicked user
-                await self.emit('kicked_from_lobby', {
-                    'lobby_code': lobby_code,
-                    'message': 'You have been kicked from the lobby'
-                }, room=kicked_sid)
+            # Get kicked user's sessions to force disconnect from lobby room
+            kicked_sessions = manager.get_identifier_sessions(namespace='/lobby', identifier=request.identifier)
+            
+            if kicked_sessions:
+                for kicked_sid in kicked_sessions:
+                    await self.leave_room(kicked_sid, lobby_code)
+                    # Notify kicked user
+                    await self.emit('kicked_from_lobby', {
+                        'lobby_code': lobby_code,
+                        'message': 'You have been kicked from the lobby'
+                    }, room=kicked_sid)
             
             # If game was ended due to player being kicked, broadcast game_ended event
             if game_ended_result:
