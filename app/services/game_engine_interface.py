@@ -463,3 +463,27 @@ class GameEngineInterface(ABC):
         if len(self.player_ids) == 2:
             self.winner_id = next(pid for pid in self.player_ids if pid != player_id)
         return GameResult.FORFEIT, self.winner_id
+    
+    def calculate_elo_adjustments(self, game_state: Dict[str, Any]) -> Dict[int, int]:
+        """
+        Calculate ELO adjustments for all players based on game state.
+        Can be overridden by subclasses for custom ELO logic (e.g. 2nd/3rd place).
+        
+        Args:
+            game_state: The final game state
+            
+        Returns:
+            Dictionary mapping player_id to ELO adjustment (e.g. {1: 1, 2: -1})
+        """
+        adjustments = {}
+        winner_id = game_state.get("winner_id")
+        
+        if winner_id:
+            # Base case: Winner gets +1, everyone else gets -1
+            for player_id in self.player_ids:
+                if player_id == winner_id:
+                    adjustments[player_id] = 1
+                else:
+                    adjustments[player_id] = -1
+        
+        return adjustments

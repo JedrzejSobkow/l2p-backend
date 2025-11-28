@@ -269,6 +269,9 @@ class GameNamespace(GuestAuthNamespace):
             
             # If game ended, broadcast game ended event
             if move_result["result"] != "in_progress":
+                # Update ELOs
+                await GameService.update_player_elos(redis, lobby_code, move_result["game_state"])
+                
                 end_event = GameEndedEvent(
                     lobby_code=lobby_code,
                     result=move_result["result"],
@@ -355,6 +358,9 @@ class GameNamespace(GuestAuthNamespace):
                 game_state=forfeit_result["game_state"]
             )
             await self.emit("player_forfeited", forfeit_event.model_dump(mode='json'), room=lobby_code)
+            
+            # Update ELOs
+            await GameService.update_player_elos(redis, lobby_code, forfeit_result["game_state"])
             
             # Broadcast game ended event
             end_event = GameEndedEvent(
@@ -447,6 +453,8 @@ class GameNamespace(GuestAuthNamespace):
                 details={"message": str(e)}
             )
             await self.emit("game_error", error_response.model_dump(mode='json'), room=sid)
+
+
 
 
 # Register the namespace

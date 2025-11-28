@@ -634,6 +634,52 @@ class GameService:
         logger.debug(f"Cleared timeout key for lobby {lobby_code}")
     
     @staticmethod
+    async def update_player_elos(redis: Redis, lobby_code: str, game_state: dict):
+        """
+        Update ELO scores for players after game end.
+        Supports multi-player games with variable adjustments.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            game_state: The final game state containing winner information
+        """
+        try:
+            # Get game engine to calculate adjustment
+            engine = await GameService._load_engine(redis, lobby_code)
+            if not engine:
+                return
+            
+            # Calculate adjustments for all players
+            adjustments = engine.calculate_elo_adjustments(game_state)
+            
+            if not adjustments:
+                return
+            
+            # Update users in DB
+            from infrastructure.postgres_connection import postgres_connection
+            from sqlalchemy import update
+            from models.registered_user import RegisteredUser
+            
+            async with postgres_connection.session_factory() as session:
+                for player_id, adjustment in adjustments.items():
+                    if adjustment == 0:
+                        continue
+                        
+                    await session.execute(
+                        update(RegisteredUser)
+                        .where(RegisteredUser.id == player_id)
+                        .values(elo=RegisteredUser.elo + adjustment)
+                    )
+                
+                await session.commit()
+                
+            logger.info(f"Updated ELOs for lobby {lobby_code}: {adjustments}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update ELOs: {e}", exc_info=True)
+    
+    @staticmethod
     async def delete_game(redis: Redis, lobby_code: str):
         """
         Delete a game and clean up all related data.

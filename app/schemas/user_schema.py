@@ -2,7 +2,7 @@
 
 from fastapi_users import schemas
 from typing import Optional
-from pydantic import EmailStr, Field, ConfigDict, field_validator
+from pydantic import EmailStr, Field, ConfigDict, field_validator, BaseModel
 import re
 
 
@@ -49,6 +49,15 @@ class UserRead(schemas.BaseUser[int]):
     is_verified: bool = False
     pfp_path: Optional[str] = None
     description: Optional[str] = None
+    elo: int
+
+
+class UserLeaderboardRead(BaseModel):
+    """Schema for reading public user data for leaderboard"""
+    nickname: str
+    pfp_path: Optional[str] = None
+    description: Optional[str] = None
+    elo: int
 
 
 class UserCreate(UserValidatorsMixin, schemas.BaseUserCreate):
