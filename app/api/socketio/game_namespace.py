@@ -151,14 +151,14 @@ class GameNamespace(GuestAuthNamespace):
                 )
             
             # Get player IDs from lobby members
-            player_ids = [member["user_identifier"] for member in lobby["members"]]
+            player_identifiers = [member["identifier"] for member in lobby["members"]]
             
             # Create the game
             game_result = await GameService.create_game(
                 redis=redis,
                 lobby_code=lobby_code,
                 game_name=game_name,
-                player_ids=player_ids,
+                identifiers=player_identifiers,
                 rules=rules
             )
             
@@ -176,7 +176,7 @@ class GameNamespace(GuestAuthNamespace):
                 game_name=game_result["game_name"],
                 game_state=game_result["game_state"],
                 game_info=game_result["game_info"],
-                current_turn_player_identifier=game_result["current_turn_player_identifier"]
+                current_turn_identifier=game_result["current_turn_identifier"]
             )
             # await self.emit("game_started", event.model_dump(mode='json'), room=sid)
             
@@ -263,7 +263,7 @@ class GameNamespace(GuestAuthNamespace):
                 identifier=identifier,
                 move_data=request.move_data,
                 game_state=move_result["game_state"],
-                current_turn_player_identifier=move_result.get("current_turn_player_identifier")
+                current_turn_identifier=move_result.get("current_turn_identifier")
             )
             await self.emit("move_made", move_event.model_dump(mode='json'), room=lobby_code)
             
