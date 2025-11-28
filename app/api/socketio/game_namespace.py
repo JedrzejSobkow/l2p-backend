@@ -164,7 +164,7 @@ class GameNamespace(GuestAuthNamespace):
             
             # Join all lobby members to the game room
             for member in lobby["members"]:
-                member_identifier = member["user_identifier"]
+                member_identifier = member["identifier"]
                 member_sessions = manager.get_identifier_sessions(namespace='/game', identifier=member_identifier)
                 for member_sid in member_sessions:
                     await self.enter_room(member_sid, lobby_code)
