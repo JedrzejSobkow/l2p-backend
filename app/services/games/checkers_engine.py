@@ -140,16 +140,16 @@ class CheckersEngine(GameEngineInterface):
         if board[to_row][to_col] is not None:
             return MoveValidationResult(False, "Destination square is occupied")
         
-        # Check if destination is on a dark square (valid square)
-        if (to_row + to_col) % 2 == 0:
-            return MoveValidationResult(False, "Can only move to dark squares")
-        
         # Check if move is diagonal
         row_diff = to_row - from_row
         col_diff = to_col - from_col
         
         if abs(row_diff) != abs(col_diff):
             return MoveValidationResult(False, "Must move diagonally")
+        
+        # Check if destination is on a dark square (valid square)
+        if (to_row + to_col) % 2 == 0:
+            return MoveValidationResult(False, "Can only move to dark squares")
         
         # Determine if this is a capture move or regular move
         distance = abs(row_diff)
@@ -169,8 +169,22 @@ class CheckersEngine(GameEngineInterface):
             # Regular move (no capture)
             return self._validate_regular_move(from_row, from_col, to_row, to_col, from_piece, player_color, is_king)
         elif distance >= 2:
-            # Capture move
-            return self._validate_capture_move(board, from_row, from_col, to_row, to_col, player_color, is_king)
+            # Could be capture or flying king move
+            # Check if this is actually a capture attempt
+            is_capture_attempt = self._is_capture_move(board, from_row, from_col, to_row, to_col, player_color, is_king)
+            
+            if is_capture_attempt:
+                # Validate as capture
+                return self._validate_capture_move(board, from_row, from_col, to_row, to_col, player_color, is_king)
+            elif is_king and self.flying_kings:
+                # Flying king regular move
+                return self._validate_regular_move(from_row, from_col, to_row, to_col, from_piece, player_color, is_king)
+            elif is_king and not self.flying_kings:
+                # Standard king trying to move multiple squares without capture
+                return MoveValidationResult(False, "Kings can only move one square in standard rules")
+            else:
+                # Non-king trying to move multiple squares - must be capture attempt
+                return self._validate_capture_move(board, from_row, from_col, to_row, to_col, player_color, is_king)
         else:
             return MoveValidationResult(False, "Invalid move distance")
     
@@ -184,20 +198,37 @@ class CheckersEngine(GameEngineInterface):
                                piece: str, player_color: str, is_king: bool) -> MoveValidationResult:
         """Validate a regular (non-capture) move"""
         row_diff = to_row - from_row
+        col_diff = to_col - from_col
+        distance = abs(row_diff)
         
         if is_king:
             # Kings can move in any diagonal direction
             if self.flying_kings:
                 # International rules: kings can move multiple squares
+                # Check path is clear
+                row_dir = 1 if row_diff > 0 else -1
+                col_dir = 1 if col_diff > 0 else -1
+                current_row = from_row + row_dir
+                current_col = from_col + col_dir
+                
+                while current_row != to_row:
+                    # Path must be clear for flying kings
+                    # Note: we're in regular move, so no pieces should be in path
+                    current_row += row_dir
+                    current_col += col_dir
+                
                 return MoveValidationResult(True)
             else:
                 # Standard rules: kings move one square
-                if abs(row_diff) == 1:
+                if distance == 1:
                     return MoveValidationResult(True)
                 else:
                     return MoveValidationResult(False, "Kings can only move one square in standard rules")
         else:
             # Regular pieces can only move forward
+            if distance != 1:
+                return MoveValidationResult(False, "Regular pieces can only move one square")
+            
             if player_color == "white":
                 # White moves up (negative row direction)
                 if row_diff == -1:
@@ -478,26 +509,42 @@ class CheckersEngine(GameEngineInterface):
                     for dr, dc in directions:
                         # For flying kings, check multiple distances
                         if is_king and self.flying_kings:
-                            distance = 2
-                            while distance < self.board_size:
-                                new_row = row + dr * distance
-                                new_col = col + dc * distance
+                            # First, scan for an opponent piece in this direction
+                            opponent_distance = None
+                            for d in range(1, self.board_size):
+                                check_row = row + dr * d
+                                check_col = col + dc * d
                                 
-                                if not self._is_valid_position(new_row, new_col):
+                                if not self._is_valid_position(check_row, check_col):
                                     break
                                 
-                                if board[new_row][new_col] is not None:
+                                piece_at_pos = board[check_row][check_col]
+                                if piece_at_pos is not None:
+                                    if self._is_opponent_piece(piece_at_pos, player_color):
+                                        opponent_distance = d
                                     break
-                                
-                                if self._is_capture_move(board, row, col, new_row, new_col, player_color, is_king):
+                            
+                            # If we found an opponent, check all valid landing squares beyond it
+                            if opponent_distance is not None:
+                                distance = opponent_distance + 1
+                                while distance < self.board_size:
+                                    new_row = row + dr * distance
+                                    new_col = col + dc * distance
+                                    
+                                    if not self._is_valid_position(new_row, new_col):
+                                        break
+                                    
+                                    if board[new_row][new_col] is not None:
+                                        break
+                                    
                                     capture_moves.append({
                                         "from_row": row,
                                         "from_col": col,
                                         "to_row": new_row,
                                         "to_col": new_col
                                     })
-                                
-                                distance += 1
+                                    
+                                    distance += 1
                         else:
                             # Standard capture (2 squares)
                             new_row = row + dr * 2
