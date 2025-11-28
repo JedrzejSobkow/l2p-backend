@@ -492,7 +492,7 @@ class LobbyNamespace(GuestAuthNamespace):
             lobby = await LobbyService.update_lobby_settings(
                 redis=redis,
                 lobby_code=lobby_code,
-                host_identifier=identifier,
+                user_identifier=identifier,
                 name=request.name,
                 max_players=request.max_players,
                 is_public=request.is_public
