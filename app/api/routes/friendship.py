@@ -107,6 +107,14 @@ async def accept_friend_request(
         requester_id=friendship_data.friend_user_id
     )
     
+    # Notify the original requester that their friend request was accepted
+    await UserStatusService.notify_friend_request_accepted(
+        requester_id=friendship_data.friend_user_id,
+        accepter_id=current_user.id,
+        accepter_nickname=current_user.nickname,
+        accepter_pfp_path=current_user.pfp_path
+    )
+    
     return friendship
 
 

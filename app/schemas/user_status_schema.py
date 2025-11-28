@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 class UserStatus(str, Enum):
@@ -22,6 +22,12 @@ class FriendRequestEvent(BaseModel):
     sender_id: int
     sender_nickname: str
     sender_pfp_path: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class FriendRequestAcceptedEvent(BaseModel):
+    accepter_id: int
+    accepter_nickname: str
+    accepter_pfp_path: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class FriendRemovedEvent(BaseModel):

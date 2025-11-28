@@ -7,7 +7,7 @@ from infrastructure.socketio_manager import manager, sio
 from infrastructure.postgres_connection import postgres_connection
 from infrastructure.redis_connection import redis_connection
 from models.friendship import Friendship
-from schemas.user_status_schema import UserStatus, UserStatusUpdateEvent, FriendStatusListResponse, FriendRequestEvent, FriendRemovedEvent
+from schemas.user_status_schema import UserStatus, UserStatusUpdateEvent, FriendStatusListResponse, FriendRequestEvent, FriendRequestAcceptedEvent, FriendRemovedEvent
 from services.lobby_service import LobbyService
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,29 @@ class UserStatusService:
                 logger.info(f"Notified user {recipient_id} of friend request from {sender_id}")
         except Exception as e:
             logger.error(f"Error notifying friend request to user {recipient_id}: {e}")
+
+    @classmethod
+    async def notify_friend_request_accepted(cls, requester_id: int, accepter_id: int, accepter_nickname: str, accepter_pfp_path: Optional[str] = None):
+        """
+        Notify the original requester that their friend request was accepted.
+        """
+        try:
+            # Check if requester is online in chat namespace
+            requester_sessions = manager.get_user_sessions(namespace='/chat', user_id=requester_id)
+            if requester_sessions:
+                event = FriendRequestAcceptedEvent(
+                    accepter_id=accepter_id,
+                    accepter_nickname=accepter_nickname,
+                    accepter_pfp_path=accepter_pfp_path
+                )
+                event_data = event.model_dump(mode='json')
+                
+                for sid in requester_sessions:
+                    await sio.emit('friend_request_accepted', event_data, room=sid, namespace='/chat')
+                logger.info(f"Notified user {requester_id} that {accepter_id} accepted their friend request")
+        except Exception as e:
+            logger.error(f"Error notifying friend request acceptance to user {requester_id}: {e}")
+
 
     @classmethod
     async def get_friends_ids(cls, user_id: int, session: AsyncSession) -> List[int]:
