@@ -70,6 +70,9 @@ class LudoEngine(GameEngineInterface):
         
         # Track if current player gets an extra turn
         self.extra_turn_pending = False
+        
+        # Track if turn is complete (dice rolled AND move made, or no moves possible)
+        self.turn_complete = True
     
     def _initialize_game_specific_state(self) -> Dict[str, Any]:
         """Initialize Ludo game state with all pieces in yards"""
@@ -218,13 +221,13 @@ class LudoEngine(GameEngineInterface):
         pieces_at_position = []
         
         for player_id, player_pieces in game_state["pieces"].items():
-            if exclude_player is not None and player_id == exclude_player:
+            if exclude_player is not None and str(player_id) == str(exclude_player):
                 continue
             
             for piece in player_pieces:
                 if piece["position"] == position:
                     pieces_at_position.append({
-                        "player_id": player_id,
+                        "player_id": int(player_id) if str(player_id).isdigit() else player_id,
                         "piece": piece
                     })
         
@@ -238,7 +241,8 @@ class LudoEngine(GameEngineInterface):
     def _get_valid_pieces(self, game_state: Dict[str, Any], player_id: int, dice_roll: int) -> List[Dict[str, Any]]:
         """Get list of pieces that can move with current dice roll"""
         valid_pieces = []
-        player_pieces = game_state["pieces"][player_id]
+        # Ensure we use string key for player_id as JSON converts keys to strings
+        player_pieces = game_state["pieces"][str(player_id)]
         
         for piece in player_pieces:
             if self._can_piece_move(game_state, player_id, piece, dice_roll):
@@ -283,7 +287,8 @@ class LudoEngine(GameEngineInterface):
             dice_roll = game_state["current_dice_roll"]
             
             # Find the piece
-            player_pieces = game_state["pieces"][player_id]
+            # Ensure we use string key for player_id as JSON converts keys to strings
+            player_pieces = game_state["pieces"][str(player_id)]
             piece = next((p for p in player_pieces if p["id"] == piece_id), None)
             
             if piece is None:
@@ -311,8 +316,19 @@ class LudoEngine(GameEngineInterface):
             # Check if player rolled a 6 (grants extra turn)
             if dice_roll == 6 and self.six_grants_extra_turn:
                 game_state["extra_turn_pending"] = True
+                self.extra_turn_pending = True
             else:
                 game_state["extra_turn_pending"] = False
+                self.extra_turn_pending = False
+            
+            # Check if any moves are possible
+            valid_pieces = self._get_valid_pieces(game_state, player_id, dice_roll)
+            if valid_pieces:
+                # Player can move, so turn is not complete
+                self.turn_complete = False
+            else:
+                # No moves possible, turn is complete
+                self.turn_complete = True
             
             # Record in history
             game_state["moves_history"].append({
@@ -322,11 +338,15 @@ class LudoEngine(GameEngineInterface):
             })
             
         elif action == "move_piece":
+            # Sync extra_turn_pending from state (it was set during roll_dice)
+            self.extra_turn_pending = game_state.get("extra_turn_pending", False)
+            
             piece_id = move_data["piece_id"]
             dice_roll = game_state["current_dice_roll"]
             
             # Find and update the piece
-            player_pieces = game_state["pieces"][player_id]
+            # Ensure we use string key for player_id as JSON converts keys to strings
+            player_pieces = game_state["pieces"][str(player_id)]
             piece = next(p for p in player_pieces if p["id"] == piece_id)
             
             old_position = piece["position"]
@@ -361,6 +381,9 @@ class LudoEngine(GameEngineInterface):
                 "to": new_position,
                 "dice_roll": dice_roll
             })
+            
+            # Move made, turn is complete
+            self.turn_complete = True
         
         return game_state
     
@@ -372,14 +395,20 @@ class LudoEngine(GameEngineInterface):
             if finished_count == self.pieces_per_player:
                 # This player has won!
                 self.game_result = GameResult.PLAYER_WIN
-                self.winner_id = player_id
-                return GameResult.PLAYER_WIN, player_id
+                # Ensure winner_id is int
+                winner_id_int = int(player_id) if str(player_id).isdigit() else player_id
+                self.winner_id = winner_id_int
+                return GameResult.PLAYER_WIN, winner_id_int
         
         # Game still in progress
         return GameResult.IN_PROGRESS, None
     
     def advance_turn(self):
         """Advance to next player's turn, respecting extra turns from rolling 6"""
+        # If turn is not complete (waiting for move), don't advance
+        if not self.turn_complete:
+            return
+
         # Only advance if no extra turn is pending
         if not self.extra_turn_pending:
             super().advance_turn()
@@ -389,12 +418,21 @@ class LudoEngine(GameEngineInterface):
     
     def start_turn(self, game_state: Dict[str, Any]) -> Dict[str, Any]:
         """Start a new turn - reset turn-specific state"""
+        # If turn is not complete, preserve state
+        if not self.turn_complete:
+            return game_state
+
         game_state = super().start_turn(game_state)
         
         # Reset turn state
         game_state["current_dice_roll"] = None
         game_state["dice_rolled"] = False
         game_state["move_made"] = False
+        
+        # Sync extra_turn_pending
+        # If self.extra_turn_pending is False but game_state is True, it means we consumed it
+        if game_state.get("extra_turn_pending", False) and not self.extra_turn_pending:
+            game_state["extra_turn_pending"] = False
         
         # Update extra turn flag
         self.extra_turn_pending = game_state.get("extra_turn_pending", False)
@@ -423,21 +461,21 @@ class LudoEngine(GameEngineInterface):
                     description="Number of pieces each player controls"
                 ),
                 "six_grants_extra_turn": GameRuleOption(
-                    type="boolean",
-                    allowed_values=None,
-                    default=True,
+                    type="string",
+                    allowed_values=["yes", "no"],
+                    default="yes",
                     description="Whether rolling a 6 grants an extra turn"
                 ),
                 "exact_roll_to_finish": GameRuleOption(
-                    type="boolean",
-                    allowed_values=None,
-                    default=True,
+                    type="string",
+                    allowed_values=["yes", "no"],
+                    default="yes",
                     description="Whether exact roll is needed to finish (vs. allowing overshoot)"
                 ),
                 "capture_sends_home": GameRuleOption(
-                    type="boolean",
-                    allowed_values=None,
-                    default=True,
+                    type="string",
+                    allowed_values=["yes", "no"],
+                    default="yes",
                     description="Whether landing on opponent piece sends it back to yard"
                 ),
                 "timeout_type": GameRuleOption(
