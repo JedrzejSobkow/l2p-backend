@@ -8,6 +8,7 @@ from services.user_manager import get_user_manager, UserManager
 from services.guest_service import GuestService
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
+from infrastructure.socketio_manager import manager as socketio_manager
 from infrastructure.redis_connection import get_redis
 from config.settings import settings
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,7 +86,7 @@ async def get_online_users_count():
     """
     Get the total number of online users.
     """
-    count = manager.get_online_users_count()
+    count = socketio_manager.get_online_users_count()
     return {"count": count}
 
 
