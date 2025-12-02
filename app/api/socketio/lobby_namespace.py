@@ -1371,7 +1371,8 @@ class LobbyNamespace(GuestAuthNamespace):
                 return
             
             # Check if user is in the lobby
-            user_in_lobby = any(m['user_id'] == user_id for m in lobby['members'])
+            user_identifier = f"user:{user_id}"
+            user_in_lobby = any(m['identifier'] == user_identifier for m in lobby['members'])
             if not user_in_lobby:
                 error_response = LobbyErrorResponse(
                     message='You must be in the lobby to invite friends',
@@ -1418,6 +1419,7 @@ class LobbyNamespace(GuestAuthNamespace):
                 error_code='INTERNAL_ERROR'
             )
             await self.emit('lobby_error', error_response.model_dump(mode='json'), room=sid)
+            raise e 
 
     async def on_get_available_games(self, sid, data):
         """
