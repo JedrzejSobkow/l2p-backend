@@ -617,3 +617,70 @@ class TestGameEngineInterfaceExtended:
         # Should return None for no timeout
         remaining = engine.get_remaining_time(state, 1)
         assert remaining is None
+
+    def test_validate_rules_float_type(self):
+        """Test validating float/number type rules"""
+        from schemas.game_schema import GameRuleOption, GameInfo
+        
+        # Create mock engine with float rule
+        class FloatRuleEngine(GameEngineInterface):
+            def _initialize_game_specific_state(self):
+                return {}
+            
+            def _validate_game_specific_move(self, game_state, player_id, move_data):
+                return MoveValidationResult(valid=True)
+            
+            def apply_move(self, game_state, player_id, move_data):
+                return game_state
+            
+            def check_game_result(self, game_state):
+                return (GameResult.IN_PROGRESS, None)
+            
+            @classmethod
+            def get_game_name(cls):
+                return "float_test"
+            
+            @classmethod
+            def get_game_info(cls):
+                return GameInfo(
+                    game_name="float_test",
+                    display_name="Float Test",
+                    min_players=2,
+                    max_players=2,
+                    description="Test",
+                    supported_rules={
+                        "float_rule": GameRuleOption(
+                            type="float",
+                            default=1.5,
+                            description="A float rule",
+                            allowed_values=None
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Valid float
+        engine = FloatRuleEngine(lobby_code="TEST1", player_ids=[1, 2], rules={"float_rule": 2.5})
+        assert engine.rules["float_rule"] == 2.5
+        
+        # Valid int (should be accepted as float)
+        engine = FloatRuleEngine(lobby_code="TEST2", player_ids=[1, 2], rules={"float_rule": 3})
+        assert engine.rules["float_rule"] == 3
+        
+        # Invalid - boolean should raise error
+        with pytest.raises(ValueError) as exc:
+            FloatRuleEngine(lobby_code="TEST3", player_ids=[1, 2], rules={"float_rule": True})
+        assert "must be" in str(exc.value).lower()
+    
+    def test_abstract_methods(self):
+        """Test that abstract methods exist and are documented"""
+        # This test documents that apply_move is abstract
+        # The pass statement in the base class (line 152) is unreachable
+        # because Python enforces @abstractmethod decoration
+        from abc import ABC
+        
+        assert issubclass(GameEngineInterface, ABC)
+        assert hasattr(GameEngineInterface, 'apply_move')
+        assert hasattr(GameEngineInterface.apply_move, '__isabstractmethod__')
+        assert GameEngineInterface.apply_move.__isabstractmethod__ is True

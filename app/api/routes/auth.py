@@ -1,14 +1,18 @@
 # app/api/routes/auth.py
 
-from fastapi import APIRouter, Depends, Response, Request
+from fastapi import APIRouter, Depends, Response, Request, Query
 from fastapi_users import FastAPIUsers
 from models.registered_user import RegisteredUser
-from schemas.user_schema import UserRead, UserCreate, UserUpdate
+from schemas.user_schema import UserRead, UserCreate, UserUpdate, GuestSessionResponse, UserLeaderboardRead
 from services.user_manager import get_user_manager, UserManager
+from services.guest_service import GuestService
 from infrastructure.auth_config import auth_backend
 from infrastructure.google_oauth import google_oauth_client
+from infrastructure.redis_connection import get_redis
 from config.settings import settings
-from infrastructure.socketio_manager import manager
+from sqlalchemy.ext.asyncio import AsyncSession
+from infrastructure.postgres_connection import get_db_session
+from sqlalchemy import select
 
 
 # Initialize FastAPIUsers with our user manager and auth backend
@@ -84,6 +88,65 @@ async def get_online_users_count():
     count = manager.get_online_users_count()
     return {"count": count}
 
+
+@auth_router.post("/guest/session", response_model=GuestSessionResponse, tags=["Authentication"])
+async def create_guest_session(
+    response: Response,
+):
+    """
+    Create a guest session with auto-generated nickname (guest{6digits})
+    
+    - No input required
+    - Returns guest_id and nickname
+    - Sets cookie 'l2p_guest' with guest_id
+    - Session expires after 8 hours
+    """
+    redis = get_redis()
+    
+    # Create guest session with auto-generated nickname
+    guest = await GuestService.create_guest_session(redis)
+    
+    # Set guest cookie
+    response.set_cookie(
+        key="l2p_guest",
+        value=guest.guest_id,
+        httponly=True,
+        max_age=GuestService.GUEST_SESSION_TTL,
+        samesite="lax"
+    )
+    
+    return GuestSessionResponse(
+        guest_id=guest.guest_id,
+        nickname=guest.nickname,
+        expires_in=GuestService.GUEST_SESSION_TTL
+    )
+
+
+@users_router.get("/leaderboard", response_model=list[UserLeaderboardRead])
+async def get_leaderboard(
+    n: int = Query(default=10, ge=1, le=100, description="Number of top players to retrieve"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Retrieve the top N players with the highest ELO ratings.
+    
+    Args:
+        n: Number of top players to retrieve (default: 10, max: 100)
+        
+    Returns:
+        List of users sorted by ELO rating in descending order
+    """
+    stmt = (
+        select(RegisteredUser)
+        .where(RegisteredUser.is_active == True)
+        .order_by(RegisteredUser.elo.desc())
+        .limit(n)
+    )
+    
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+    
+    return users
 
 @users_router.delete("/me", status_code=204, tags=["Users"])
 async def delete_current_user(

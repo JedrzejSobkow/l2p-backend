@@ -57,7 +57,7 @@ class GameService:
         redis: Redis,
         lobby_code: str,
         game_name: str,
-        player_ids: List[int],
+        identifiers: List[str],
         rules: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -67,7 +67,7 @@ class GameService:
             redis: Redis client
             lobby_code: The lobby code this game is bound to
             game_name: Name of the game type (e.g., 'tictactoe')
-            player_ids: List of player IDs participating
+            identifiers: List of player identifiers participating (e.g., ['user:123', 'guest:uuid'])
             rules: Optional custom rules for the game
             
         Returns:
@@ -109,11 +109,11 @@ class GameService:
         # Create game engine instance
         engine_class = GameService.GAME_ENGINES[game_name]
         try:
-            engine = engine_class(lobby_code, player_ids, rules)
+            engine = engine_class(lobby_code, identifiers, rules)
         except ValueError as e:
             raise BadRequestException(
                 message=f"Failed to create game: {str(e)}",
-                details={"game_name": game_name, "player_ids": player_ids}
+                details={"game_name": game_name, "identifiers": identifiers}
             )
         
         # Initialize game state
@@ -122,9 +122,9 @@ class GameService:
         # Add metadata to game state
         now = datetime.now(UTC)
         game_state["created_at"] = now.isoformat()
-        game_state["current_turn_player_id"] = engine.current_player_id
+        game_state["current_turn_identifier"] = engine.current_player_id
         game_state["result"] = GameResult.IN_PROGRESS.value
-        game_state["winner_id"] = None
+        game_state["winner_identifier"] = None
         
         # Start the first turn's timer
         game_state = engine.start_turn(game_state)
@@ -133,7 +133,7 @@ class GameService:
         engine_config = {
             "game_name": game_name,
             "lobby_code": lobby_code,
-            "player_ids": player_ids,
+            "identifiers": identifiers,
             "rules": rules or {},
             "current_turn_index": engine.current_turn_index,
         }
@@ -166,7 +166,14 @@ class GameService:
         # Set initial timeout key if timeout is configured
         await GameService._set_timeout_key(redis, engine, game_state, lobby_code)
         
-        logger.info(f"Game '{game_name}' created for lobby {lobby_code} with players {player_ids}")
+        # Extend guest sessions for all guest players
+        from services.guest_service import GuestService
+        for identifier in identifiers:
+            if identifier.startswith("guest:"):
+                guest_id = identifier.split(":", 1)[1]
+                await GuestService.extend_guest_session(redis, guest_id)
+        
+        logger.info(f"Game '{game_name}' created for lobby {lobby_code} with identifiers {identifiers}")
         
         # Get static game info
         engine_class = GameService.GAME_ENGINES[game_name]
@@ -177,7 +184,7 @@ class GameService:
             "game_name": game_name,
             "game_state": game_state,
             "game_info": game_info,
-            "current_turn_player_id": engine.current_player_id,
+            "current_turn_identifier": engine.current_player_id,
             "created_at": now,
         }
     
@@ -238,7 +245,7 @@ class GameService:
         engine_class = GameService.GAME_ENGINES[game_name]
         engine = engine_class(
             config["lobby_code"],
-            config["player_ids"],
+            config["identifiers"],
             config["rules"]
         )
         
@@ -259,7 +266,7 @@ class GameService:
         engine_config = {
             "game_name": engine.get_game_name(),
             "lobby_code": engine.lobby_code,
-            "player_ids": engine.player_ids,
+            "identifiers": engine.player_ids,
             "rules": engine.rules,
             "current_turn_index": engine.current_turn_index,
         }
@@ -274,7 +281,7 @@ class GameService:
     async def make_move(
         redis: Redis,
         lobby_code: str,
-        player_id: int,
+        identifier: str,
         move_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
@@ -283,7 +290,7 @@ class GameService:
         Args:
             redis: Redis client
             lobby_code: The lobby code
-            player_id: ID of the player making the move
+            identifier: Identifier of the player making the move (e.g., 'user:123' or 'guest:uuid')
             move_data: Move data specific to the game
             
         Returns:
@@ -311,13 +318,13 @@ class GameService:
         game_state = json.loads(state_raw)
         
         # Check for timeout before validating move
-        timeout_occurred, timeout_winner_id = engine.check_timeout(game_state)
+        timeout_occurred, timeout_winner_identifier = engine.check_timeout(game_state)
         if timeout_occurred:
             # Check if this ends the game or just skips the turn
-            if timeout_winner_id is not None or engine.game_result != GameResult.IN_PROGRESS:
+            if timeout_winner_identifier is not None or engine.game_result != GameResult.IN_PROGRESS:
                 # Game ended by timeout
                 game_state["result"] = GameResult.TIMEOUT.value
-                game_state["winner_id"] = timeout_winner_id
+                game_state["winner_identifier"] = timeout_winner_identifier
                 
                 # Save the timeout result
                 await redis.set(
@@ -328,14 +335,14 @@ class GameService:
                 
                 raise BadRequestException(
                     message="Time limit exceeded - game ended",
-                    details={"result": "timeout", "winner_id": timeout_winner_id}
+                    details={"result": "timeout", "winner_identifier": timeout_winner_identifier}
                 )
             else:
                 # Turn is skipped, advance to next player
-                logger.info(f"Player {player_id} timed out - skipping turn in lobby {lobby_code}")
+                logger.info(f"Player {identifier} timed out - skipping turn in lobby {lobby_code}")
                 game_state = engine.consume_turn_time(game_state)
                 engine.advance_turn()
-                game_state["current_turn_player_id"] = engine.current_player_id
+                game_state["current_turn_identifier"] = engine.current_player_id
                 game_state = engine.start_turn(game_state)
                 
                 # Save state and update timeout key
@@ -349,11 +356,11 @@ class GameService:
                 
                 raise BadRequestException(
                     message="Time limit exceeded - your turn was skipped",
-                    details={"skipped": True, "current_turn_player_id": engine.current_player_id}
+                    details={"skipped": True, "current_turn_identifier": engine.current_player_id}
                 )
         
         # Validate move
-        validation_result = engine.validate_move(game_state, player_id, move_data)
+        validation_result = engine.validate_move(game_state, identifier, move_data)
         if not validation_result.valid:
             raise BadRequestException(
                 message=validation_result.error_message or "Invalid move",
@@ -361,22 +368,22 @@ class GameService:
             )
         
         # Apply move
-        game_state = engine.apply_move(game_state, player_id, move_data)
+        game_state = engine.apply_move(game_state, identifier, move_data)
         
         # Consume time used for this move
         game_state = engine.consume_turn_time(game_state)
         
         # Check game result
-        result, winner_id = engine.check_game_result(game_state)
+        result, winner_identifier = engine.check_game_result(game_state)
         
         # Update metadata
         game_state["result"] = result.value
-        game_state["winner_id"] = winner_id
+        game_state["winner_identifier"] = winner_identifier
         
         # Advance turn if game is still in progress
         if result == GameResult.IN_PROGRESS:
             engine.advance_turn()
-            game_state["current_turn_player_id"] = engine.current_player_id
+            game_state["current_turn_identifier"] = engine.current_player_id
             # Start the next turn's timer
             game_state = engine.start_turn(game_state)
         
@@ -396,20 +403,26 @@ class GameService:
         else:
             await GameService._clear_timeout_key(redis, lobby_code)
         
-        logger.info(f"Move processed for lobby {lobby_code} by player {player_id}. Result: {result.value}")
+        # Extend guest session if player is a guest
+        if identifier.startswith("guest:"):
+            from services.guest_service import GuestService
+            guest_id = identifier.split(":", 1)[1]
+            await GuestService.extend_guest_session(redis, guest_id)
+        
+        logger.info(f"Move processed for lobby {lobby_code} by identifier {identifier}. Result: {result.value}")
         
         return {
             "game_state": game_state,
             "result": result.value,
-            "winner_id": winner_id,
-            "current_turn_player_id": game_state.get("current_turn_player_id"),
+            "winner_identifier": winner_identifier,
+            "current_turn_identifier": game_state.get("current_turn_identifier"),
         }
     
     @staticmethod
     async def forfeit_game(
         redis: Redis,
         lobby_code: str,
-        player_id: int
+        identifier: str
     ) -> Dict[str, Any]:
         """
         Handle a player forfeiting the game.
@@ -417,7 +430,7 @@ class GameService:
         Args:
             redis: Redis client
             lobby_code: The lobby code
-            player_id: ID of the player forfeiting
+            identifier: Identifier of the player forfeiting (e.g., 'user:123' or 'guest:uuid')
             
         Returns:
             Dictionary with updated game state
@@ -443,12 +456,12 @@ class GameService:
         game_state = json.loads(state_raw)
         
         # Process forfeit
-        result, winner_id = engine.forfeit_game(player_id)
+        result, winner_identifier = engine.forfeit_game(identifier)
         
         # Update game state
         game_state["result"] = result.value
-        game_state["winner_id"] = winner_id
-        game_state["forfeited_by"] = player_id
+        game_state["winner_identifier"] = winner_identifier
+        game_state["forfeited_by"] = identifier
         
         # Save updated state
         await redis.set(
@@ -460,12 +473,75 @@ class GameService:
         # Clear timeout key since game ended
         await GameService._clear_timeout_key(redis, lobby_code)
         
-        logger.info(f"Player {player_id} forfeited game in lobby {lobby_code}")
+        logger.info(f"Player {identifier} forfeited game in lobby {lobby_code}")
         
         return {
             "game_state": game_state,
             "result": result.value,
-            "winner_id": winner_id,
+            "winner_identifier": winner_identifier,
+        }
+    
+    @staticmethod
+    async def handle_player_left(
+        redis: Redis,
+        lobby_code: str,
+        identifier: str
+    ) -> Dict[str, Any]:
+        """
+        Handle a player leaving the lobby during an active game.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            identifier: Identifier of the player who left (e.g., 'user:123' or 'guest:uuid')
+            
+        Returns:
+            Dictionary with updated game state
+            
+        Raises:
+            NotFoundException: If game not found
+        """
+        # Load engine and game state
+        engine = await GameService._load_engine(redis, lobby_code)
+        if not engine:
+            raise NotFoundException(
+                message="Game not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        state_raw = await redis.get(GameService._game_state_key(lobby_code))
+        if not state_raw:
+            raise NotFoundException(
+                message="Game state not found",
+                details={"lobby_code": lobby_code}
+            )
+        
+        game_state = json.loads(state_raw)
+        
+        # Process player leaving - determine winner (other player)
+        result, winner_identifier = engine.forfeit_game(identifier)
+        
+        # Update game state with player_left result instead of forfeit
+        game_state["result"] = GameResult.PLAYER_LEFT.value
+        game_state["winner_identifier"] = winner_identifier
+        game_state["left_by"] = identifier
+        
+        # Save updated state
+        await redis.set(
+            GameService._game_state_key(lobby_code),
+            json.dumps(game_state),
+            ex=GameService.GAME_TTL
+        )
+        
+        # Clear timeout key since game ended
+        await GameService._clear_timeout_key(redis, lobby_code)
+        
+        logger.info(f"Player {identifier} left game in lobby {lobby_code}")
+        
+        return {
+            "game_state": game_state,
+            "result": GameResult.PLAYER_LEFT.value,
+            "winner_identifier": winner_identifier,
         }
     
     @staticmethod
@@ -495,15 +571,15 @@ class GameService:
         timing_info = {
             "timeout_type": timing.get("timeout_type", "none"),
             "timeout_seconds": timing.get("timeout_seconds", 0),
-            "current_player_id": engine.current_player_id,
+            "current_identifier": engine.current_player_id,
         }
         
         # Add player-specific time remaining
         if timing.get("timeout_type") != "none":
             player_times = {}
-            for player_id in engine.player_ids:
-                remaining_time = engine.get_remaining_time(game_state, player_id)
-                player_times[str(player_id)] = remaining_time
+            for identifier in engine.player_ids:
+                remaining_time = engine.get_remaining_time(game_state, identifier)
+                player_times[str(identifier)] = remaining_time
             timing_info["player_time_remaining"] = player_times
         
         return timing_info
@@ -556,6 +632,52 @@ class GameService:
         timeout_key = TimeoutChecker.get_timeout_key(lobby_code)
         await redis.delete(timeout_key)
         logger.debug(f"Cleared timeout key for lobby {lobby_code}")
+    
+    @staticmethod
+    async def update_player_elos(redis: Redis, lobby_code: str, game_state: dict):
+        """
+        Update ELO scores for players after game end.
+        Supports multi-player games with variable adjustments.
+        
+        Args:
+            redis: Redis client
+            lobby_code: The lobby code
+            game_state: The final game state containing winner information
+        """
+        try:
+            # Get game engine to calculate adjustment
+            engine = await GameService._load_engine(redis, lobby_code)
+            if not engine:
+                return
+            
+            # Calculate adjustments for all players
+            adjustments = engine.calculate_elo_adjustments(game_state)
+            
+            if not adjustments:
+                return
+            
+            # Update users in DB
+            from infrastructure.postgres_connection import postgres_connection
+            from sqlalchemy import update
+            from models.registered_user import RegisteredUser
+            
+            async with postgres_connection.session_factory() as session:
+                for player_id, adjustment in adjustments.items():
+                    if adjustment == 0:
+                        continue
+                        
+                    await session.execute(
+                        update(RegisteredUser)
+                        .where(RegisteredUser.id == player_id)
+                        .values(elo=RegisteredUser.elo + adjustment)
+                    )
+                
+                await session.commit()
+                
+            logger.info(f"Updated ELOs for lobby {lobby_code}: {adjustments}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update ELOs: {e}", exc_info=True)
     
     @staticmethod
     async def delete_game(redis: Redis, lobby_code: str):

@@ -38,12 +38,12 @@ class UpdateLobbySettingsRequest(BaseModel):
 
 class TransferHostRequest(BaseModel):
     """Request to transfer host privileges to another member"""
-    new_host_id: int = Field(..., description="User ID of the new host")
+    new_host_identifier: str = Field(..., description="Identifier of the new host (e.g., 'user:123' or 'guest:uuid')")
 
 
 class KickMemberRequest(BaseModel):
     """Request to kick a member from lobby (host only)"""
-    user_id: int = Field(..., description="User ID of the member to kick")
+    identifier: str = Field(..., description="Identifier of the member to kick (e.g., 'user:123' or 'guest:uuid')")
 
 
 class ToggleReadyRequest(BaseModel):
@@ -134,8 +134,8 @@ class InviteFriendRequest(BaseModel):
 # ================ Response Models ================
 
 class LobbyMemberResponse(BaseModel):
-    """Information about a lobby member"""
-    user_id: int
+    """Information about a lobby member (works for both registered users and guests)"""
+    identifier: str
     nickname: str
     pfp_path: Optional[str] = None
     is_host: bool
@@ -152,7 +152,7 @@ class LobbyResponse(BaseModel):
     """Complete lobby information"""
     lobby_code: str
     name: str
-    host_id: int
+    host_identifier: str
     max_players: int
     current_players: int
     is_public: bool
@@ -196,7 +196,7 @@ class LobbyMemberJoinedEvent(BaseModel):
 
 class LobbyMemberLeftEvent(BaseModel):
     """Event emitted when a member leaves the lobby"""
-    user_id: int
+    identifier: str
     nickname: str
     current_players: int
     message: str = "A member has left"
@@ -204,8 +204,8 @@ class LobbyMemberLeftEvent(BaseModel):
 
 class LobbyHostTransferredEvent(BaseModel):
     """Event emitted when host is transferred"""
-    old_host_id: int
-    new_host_id: int
+    old_host_identifier: str
+    new_host_identifier: str
     new_host_nickname: str
     message: str = "Host has been transferred"
 
@@ -220,15 +220,15 @@ class LobbySettingsUpdatedEvent(BaseModel):
 
 class MemberKickedEvent(BaseModel):
     """Event emitted when a member is kicked from lobby"""
-    user_id: int
+    identifier: str
     nickname: str
-    kicked_by_id: int
+    kicked_by_identifier: str
     message: str = "A member has been kicked"
 
 
 class MemberReadyChangedEvent(BaseModel):
     """Event emitted when a member changes ready status"""
-    user_id: int
+    identifier: str
     nickname: str
     is_ready: bool
     message: str = "Member ready status changed"
@@ -255,7 +255,7 @@ class LobbyErrorResponse(BaseModel):
 
 class LobbyMessageResponse(BaseModel):
     """Lobby chat message response"""
-    user_id: int
+    identifier: str
     nickname: str
     pfp_path: Optional[str] = None
     content: str
@@ -269,7 +269,7 @@ class LobbyMessageResponse(BaseModel):
 
 class LobbyUserTypingResponse(BaseModel):
     """Event emitted when user is typing in lobby chat"""
-    user_id: int
+    identifier: str
     nickname: str
 
 
