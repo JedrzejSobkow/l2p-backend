@@ -63,7 +63,7 @@ class TestLudoEngine:
         assert "moves_history" in state
         
         # Check all pieces start in yard
-        for player_id in [1, 2]:
+        for player_id in ["1", "2"]:
             assert player_id in state["pieces"]
             assert len(state["pieces"][player_id]) == 4
             for piece in state["pieces"][player_id]:
@@ -147,7 +147,7 @@ class TestLudoEngine:
         engine = LudoEngine("TEST123", [1, 2])
         state = engine.initialize_game_state()
         
-        piece_id = state["pieces"][1][0]["id"]
+        piece_id = state["pieces"]["1"][0]["id"]
         validation = engine.validate_move(state, 1, {"action": "move_piece", "piece_id": piece_id})
         
         assert validation.valid is False
@@ -162,7 +162,7 @@ class TestLudoEngine:
         state["current_dice_roll"] = 3
         state["dice_rolled"] = True
         
-        piece_id = state["pieces"][1][0]["id"]
+        piece_id = state["pieces"]["1"][0]["id"]
         validation = engine.validate_move(state, 1, {"action": "move_piece", "piece_id": piece_id})
         
         assert validation.valid is False
@@ -177,8 +177,8 @@ class TestLudoEngine:
         state["current_dice_roll"] = 6
         state["dice_rolled"] = True
         
-        piece_id = state["pieces"][1][0]["id"]
-        piece = state["pieces"][1][0]
+        piece_id = state["pieces"]["1"][0]["id"]
+        piece = state["pieces"]["1"][0]
         
         # Validate move
         validation = engine.validate_move(state, 1, {"action": "move_piece", "piece_id": piece_id})
@@ -197,7 +197,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place piece on track
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "track_5"
         
         # Roll dice
@@ -216,7 +216,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Set up piece on track
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "track_0"
         
         # Roll and move
@@ -237,11 +237,11 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place player 2's piece on track
-        opponent_piece = state["pieces"][2][0]
+        opponent_piece = state["pieces"]["2"][0]
         opponent_piece["position"] = "track_5"
         
         # Place player 1's piece nearby
-        player_piece = state["pieces"][1][0]
+        player_piece = state["pieces"]["1"][0]
         player_piece["position"] = "track_2"
         
         # Player 1 rolls 3, landing on opponent
@@ -260,11 +260,11 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place opponent on a safe square (e.g., 8)
-        opponent_piece = state["pieces"][2][0]
+        opponent_piece = state["pieces"]["2"][0]
         opponent_piece["position"] = "track_8"
         
         # Place player piece nearby
-        player_piece = state["pieces"][1][0]
+        player_piece = state["pieces"]["1"][0]
         player_piece["position"] = "track_3"
         
         # Player rolls 5, landing on safe square
@@ -284,10 +284,10 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place two of player 1's pieces
-        piece1 = state["pieces"][1][0]
+        piece1 = state["pieces"]["1"][0]
         piece1["position"] = "track_5"
         
-        piece2 = state["pieces"][1][1]
+        piece2 = state["pieces"]["1"][1]
         piece2["position"] = "track_2"
         
         # Move piece2 to land on piece1
@@ -306,10 +306,10 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Set up capture scenario
-        opponent_piece = state["pieces"][2][0]
+        opponent_piece = state["pieces"]["2"][0]
         opponent_piece["position"] = "track_5"
         
-        player_piece = state["pieces"][1][0]
+        player_piece = state["pieces"]["1"][0]
         player_piece["position"] = "track_2"
         
         state["current_dice_roll"] = 3
@@ -331,7 +331,7 @@ class TestLudoEngine:
         
         # Player 0's home entry is at track_50
         # Place piece just before home entry
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "track_48"
         
         # Roll exactly 2 to land on home entry
@@ -349,7 +349,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place piece in home path
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "home_2"
         
         # Roll dice
@@ -367,7 +367,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place piece close to finish
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "home_4"
         
         # Roll too much (need 2, but roll 4)
@@ -384,7 +384,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place piece at home_4, need 2 to finish
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "home_4"
         
         # Roll exactly 2
@@ -402,7 +402,7 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place piece at finished
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "finished"
         
         # Roll dice
@@ -418,7 +418,7 @@ class TestLudoEngine:
         engine = LudoEngine("TEST123", [1, 2])
         state = engine.initialize_game_state()
         
-        piece = state["pieces"][1][0]
+        piece = state["pieces"]["1"][0]
         piece["position"] = "home_3"
         
         # Home path is always safe
@@ -443,7 +443,7 @@ class TestLudoEngine:
         
         # Finish 3 out of 4 pieces
         for i in range(3):
-            state["pieces"][1][i]["position"] = "finished"
+            state["pieces"]["1"][i]["position"] = "finished"
         
         result, winner = engine.check_game_result(state)
         
@@ -457,7 +457,7 @@ class TestLudoEngine:
         
         # Finish all 4 pieces
         for i in range(4):
-            state["pieces"][1][i]["position"] = "finished"
+            state["pieces"]["1"][i]["position"] = "finished"
         
         result, winner = engine.check_game_result(state)
         
@@ -471,7 +471,7 @@ class TestLudoEngine:
         
         # Player 30 finishes all pieces
         for i in range(4):
-            state["pieces"][30][i]["position"] = "finished"
+            state["pieces"]["30"][i]["position"] = "finished"
         
         result, winner = engine.check_game_result(state)
         
@@ -540,9 +540,9 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Place multiple pieces on track
-        state["pieces"][1][0]["position"] = "track_5"
-        state["pieces"][1][1]["position"] = "track_10"
-        state["pieces"][1][2]["position"] = "track_15"
+        state["pieces"]["1"][0]["position"] = "track_5"
+        state["pieces"]["1"][1]["position"] = "track_10"
+        state["pieces"]["1"][2]["position"] = "track_15"
         
         # All should be able to move with roll of 3
         valid_pieces = engine._get_valid_pieces(state, 1, 3)
@@ -635,12 +635,12 @@ class TestLudoEngine:
         state = engine.initialize_game_state()
         
         # Each player should have 2 pieces
-        assert len(state["pieces"][1]) == 2
-        assert len(state["pieces"][2]) == 2
+        assert len(state["pieces"]["1"]) == 2
+        assert len(state["pieces"]["2"]) == 2
         
         # Win with 2 pieces
-        state["pieces"][1][0]["position"] = "finished"
-        state["pieces"][1][1]["position"] = "finished"
+        state["pieces"]["1"][0]["position"] = "finished"
+        state["pieces"]["1"][1]["position"] = "finished"
         
         result, winner = engine.check_game_result(state)
         assert result == GameResult.PLAYER_WIN

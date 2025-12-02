@@ -95,12 +95,13 @@ class LudoEngine(GameEngineInterface):
         """Initialize Ludo game state with all pieces in yards"""
         
         # Initialize all pieces in yard (position = "yard")
+        # Use string keys for player_id to ensure consistency with JSON serialization
         pieces = {}
         for player_idx, player_id in enumerate(self.player_ids):
-            pieces[player_id] = []
+            pieces[str(player_id)] = []
             for piece_idx in range(self.pieces_per_player):
                 piece_id = f"p{player_idx}_piece{piece_idx}"
-                pieces[player_id].append({
+                pieces[str(player_id)].append({
                     "id": piece_id,
                     "position": "yard",  # "yard", "track_X", "home_X", or "finished"
                     "is_safe": False,
