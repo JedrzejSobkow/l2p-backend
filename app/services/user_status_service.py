@@ -176,7 +176,8 @@ class UserStatusService:
                 lobby_max_slots = None
                 
                 # Check if online first (highest priority for OFFLINE status)
-                if not manager.is_user_online(friend_id):
+                friend_identifier = f"user:{friend_id}"
+                if not manager.is_user_online(friend_identifier):
                     status = UserStatus.OFFLINE
                 else:
                     # User is online, check if in game or lobby

@@ -573,11 +573,11 @@ class ChatService:
                 'friendship_id': friendship.id_friendship
             },
             'sender': {
-                'id': current_user.id,
+                'identifier': f"user:{current_user.id}",
                 'nickname': current_user.nickname
             },
             'recipient': {
-                'id': friend.id,
+                'identifier': f"user:{friend.id}",
                 'nickname': friend.nickname
             }
         }

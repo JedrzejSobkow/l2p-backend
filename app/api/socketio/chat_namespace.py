@@ -148,12 +148,12 @@ class ChatNamespace(AuthNamespace):
                     await self.emit('message', message_response.model_dump(mode='json'), room=sid)
                     
                     # Send to recipient if online
-                    friend_sid = manager.get_sid(recipient['id'], namespace='/chat')
+                    friend_sid = manager.get_sid(recipient['identifier'], namespace='/chat')
                     if friend_sid:
                         # Update is_mine for recipient
                         message_response.is_mine = False
                         await self.emit('message', message_response.model_dump(mode='json'), room=friend_sid)
-                        logger.info(f"Message sent to online user {recipient['id']}")
+                        logger.info(f"Message sent to online user {recipient['identifier']}")
                         
                         # Emit conversation update to recipient
                         conversation_update = ConversationUpdatedResponse(
@@ -166,12 +166,12 @@ class ChatNamespace(AuthNamespace):
                         )
                         await self.emit('conversation_updated', conversation_update.model_dump(mode='json'), room=friend_sid)
                     else:
-                        logger.info(f"User {recipient['id']} is offline, message saved to database")
+                        logger.info(f"User {recipient['identifier']} is offline, message saved to database")
                     
                     # Emit conversation update to sender
                     conversation_update = ConversationUpdatedResponse(
                         friendship_id=message_data['friendship_id'],
-                        friend_id=recipient['id'],
+                        friend_id=recipient['identifier'],
                         friend_nickname=recipient['nickname'],
                         last_message_time=message_data['created_at'],
                         last_message_content=message_dto.content,
@@ -216,7 +216,8 @@ class ChatNamespace(AuthNamespace):
                 return
             
             # Check if friend is online and get their session
-            friend_sid = manager.get_sid(typing_dto.friend_user_id, namespace='/chat')
+            friend_identifier = "user:{}".format(typing_dto.friend_user_id)
+            friend_sid = manager.get_sid(friend_identifier, namespace='/chat')
             if not friend_sid:
                 # Friend is not online, no need to send typing indicator
                 return
