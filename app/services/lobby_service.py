@@ -306,7 +306,7 @@ class LobbyService:
         }
         
         # Notify friends
-        await LobbyService._notify_lobby_status(host_id, result)
+        await LobbyService._notify_lobby_status(host_identifier, result)
         
         return result
     
@@ -439,12 +439,12 @@ class LobbyService:
         updated_lobby = await LobbyService.get_lobby(redis, lobby_code)
         
         # Notify for joining user
-        await LobbyService._notify_lobby_status(user_id, updated_lobby)
+        await LobbyService._notify_lobby_status(user_identifier, updated_lobby)
         
         # Notify for other members (filling status changed)
         for member in updated_lobby["members"]:
-            if member["user_id"] != user_id:
-                await LobbyService._notify_lobby_status(member["user_id"], updated_lobby)
+            if member["identifier"] != user_identifier:
+                await LobbyService._notify_lobby_status(member["identifier"], updated_lobby)
         
         return updated_lobby
     
@@ -498,7 +498,7 @@ class LobbyService:
         logger.info(f"{user_identifier} left lobby {lobby_code}")
         
         # Notify for leaving user
-        await LobbyService._notify_online_status(user_id)
+        await LobbyService._notify_online_status(user_identifier)
         
         # Get updated member list
         members_raw = await redis.zrange(
@@ -516,7 +516,7 @@ class LobbyService:
         updated_lobby = await LobbyService.get_lobby(redis, lobby_code)
         if updated_lobby:
             for member in updated_lobby["members"]:
-                await LobbyService._notify_lobby_status(member["user_id"], updated_lobby)
+                await LobbyService._notify_lobby_status(member["identifier"], updated_lobby)
         
         # If host left, transfer to next oldest member
         if was_host:
@@ -823,7 +823,7 @@ class LobbyService:
         # If max_players changed, notify all members
         if max_players is not None:
              for member in updated_lobby["members"]:
-                await LobbyService._notify_lobby_status(member["user_id"], updated_lobby)
+                await LobbyService._notify_lobby_status(member["identifier"], updated_lobby)
         
         return updated_lobby
     
@@ -1596,7 +1596,18 @@ class LobbyService:
         }
 
     @staticmethod
-    async def _notify_lobby_status(user_id: int, lobby_data: Dict[str, Any]):
+    async def _notify_lobby_status(identifier: str, lobby_data: Dict[str, Any]):
+        """Notify friends about lobby status (only for registered users, not guests)"""
+        # Only notify for registered users (not guests)
+        if not identifier.startswith("user:"):
+            return
+            
+        try:
+            user_id = int(identifier.split(":", 1)[1])
+        except (ValueError, IndexError):
+            logger.warning(f"Invalid user identifier format: {identifier}")
+            return
+        
         from services.user_status_service import UserStatusService
         from schemas.user_status_schema import UserStatus
         
@@ -1609,7 +1620,18 @@ class LobbyService:
         )
 
     @staticmethod
-    async def _notify_online_status(user_id: int):
+    async def _notify_online_status(identifier: str):
+        """Notify friends about online status (only for registered users, not guests)"""
+        # Only notify for registered users (not guests)
+        if not identifier.startswith("user:"):
+            return
+            
+        try:
+            user_id = int(identifier.split(":", 1)[1])
+        except (ValueError, IndexError):
+            logger.warning(f"Invalid user identifier format: {identifier}")
+            return
+        
         from services.user_status_service import UserStatusService
         from schemas.user_status_schema import UserStatus
         
