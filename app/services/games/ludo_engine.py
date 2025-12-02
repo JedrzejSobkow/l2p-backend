@@ -61,9 +61,11 @@ class LudoEngine(GameEngineInterface):
         
         # Parse custom rules
         self.pieces_per_player = self.rules.get("pieces_per_player", self.PIECES_PER_PLAYER)
-        self.six_grants_extra_turn = self.rules.get("six_grants_extra_turn", True)
-        self.exact_roll_to_finish = self.rules.get("exact_roll_to_finish", True)
-        self.capture_sends_home = self.rules.get("capture_sends_home", True)
+        # Convert string "yes"/"no" to boolean or accept boolean values directly
+        # Frontend sends "yes"/"no" strings, tests might send booleans
+        self.six_grants_extra_turn = self._parse_bool_rule("six_grants_extra_turn", True)
+        self.exact_roll_to_finish = self._parse_bool_rule("exact_roll_to_finish", True)
+        self.capture_sends_home = self._parse_bool_rule("capture_sends_home", True)
         
         # Map player IDs to player indices (0-3)
         self.player_index_map = {player_id: idx for idx, player_id in enumerate(player_ids)}
@@ -73,6 +75,21 @@ class LudoEngine(GameEngineInterface):
         
         # Track if turn is complete (dice rolled AND move made, or no moves possible)
         self.turn_complete = True
+    
+    def _parse_bool_rule(self, rule_name: str, default: bool) -> bool:
+        """
+        Parse a boolean rule that may be specified as:
+        - A boolean value (True/False) - from tests
+        - A string value ("yes"/"no") - from frontend/GameRuleOption
+        
+        Returns:
+            True if the value is True or "yes", False otherwise
+        """
+        value = self.rules.get(rule_name, "yes" if default else "no")
+        if isinstance(value, bool):
+            return value
+        # Handle string values
+        return str(value).lower() == "yes"
     
     def _initialize_game_specific_state(self) -> Dict[str, Any]:
         """Initialize Ludo game state with all pieces in yards"""

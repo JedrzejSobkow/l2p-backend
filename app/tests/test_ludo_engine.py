@@ -41,8 +41,8 @@ class TestLudoEngine:
         """Test initialization with custom rules"""
         rules = {
             "pieces_per_player": 2,
-            "six_grants_extra_turn": False,
-            "exact_roll_to_finish": False
+            "six_grants_extra_turn": "no",
+            "exact_roll_to_finish": "no"
         }
         engine = LudoEngine("TEST123", [1, 2], rules=rules)
         
@@ -363,7 +363,7 @@ class TestLudoEngine:
     
     def test_exact_roll_to_finish(self):
         """Test that exact roll is needed to finish"""
-        engine = LudoEngine("TEST123", [1, 2], rules={"exact_roll_to_finish": True})
+        engine = LudoEngine("TEST123", [1, 2], rules={"exact_roll_to_finish": "yes"})
         state = engine.initialize_game_state()
         
         # Place piece close to finish
@@ -492,7 +492,7 @@ class TestLudoEngine:
     
     def test_extra_turn_after_rolling_six(self):
         """Test that rolling 6 grants extra turn"""
-        engine = LudoEngine("TEST123", [1, 2], rules={"six_grants_extra_turn": True})
+        engine = LudoEngine("TEST123", [1, 2], rules={"six_grants_extra_turn": "yes"})
         state = engine.initialize_game_state()
         
         # Set extra turn pending
