@@ -80,6 +80,15 @@ current_active_user = fastapi_users.current_user(active=True) #TODO verification
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 
+@users_router.get("/online-count", tags=["Users"])
+async def get_online_users_count():
+    """
+    Get the total number of online users.
+    """
+    count = manager.get_online_users_count()
+    return {"count": count}
+
+
 @auth_router.post("/guest/session", response_model=GuestSessionResponse, tags=["Authentication"])
 async def create_guest_session(
     response: Response,
