@@ -186,7 +186,7 @@ class GameNamespace(GuestAuthNamespace):
             await self.emit("game_started", event.model_dump(mode='json'), room=lobby_code)
             
             # Update status for all players
-            for pid in player_ids:
+            for pid in player_identifiers:
                 await UserStatusService.notify_friends(pid, UserStatus.IN_GAME, game_name=game_name)
             
             logger.info(f"Game '{game_name}' created for lobby {lobby_code}")
