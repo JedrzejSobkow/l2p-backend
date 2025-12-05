@@ -431,8 +431,9 @@ class CheckersEngine(GameEngineInterface):
         
         # Check if the next player has any legal moves
         next_player_id = next(pid for pid in self.player_ids if pid != player_id)
-        has_legal_moves = bool(self._get_all_legal_moves(game_state, next_player_id))
-        game_state["has_legal_moves"] = "Yes" if has_legal_moves else "No"
+        legal_moves = self._get_all_legal_moves(game_state, next_player_id)
+        game_state["legal_moves"] = legal_moves  # Store legal moves in the game state
+        game_state["has_legal_moves"] = "Yes" if legal_moves else "No"
         
         return game_state
     
@@ -720,3 +721,18 @@ class CheckersEngine(GameEngineInterface):
             category="strategy",
             game_image_path="/static/images/games/checkers.png",
         )
+
+    def initialize_game_state(self) -> Dict[str, Any]:
+        """Initialize the game state with starting positions and metadata."""
+        game_state = self._initialize_game_specific_state()
+        game_state["move_count"] = 0
+        game_state["result"] = GameResult.IN_PROGRESS.value
+        game_state["winner_identifier"] = None
+        game_state["current_turn_identifier"] = self.current_player_id
+
+        # Calculate legal moves for the first player
+        legal_moves = self._get_all_legal_moves(game_state, self.current_player_id)
+        game_state["legal_moves"] = legal_moves
+        game_state["has_legal_moves"] = "Yes" if legal_moves else "No"
+
+        return game_state

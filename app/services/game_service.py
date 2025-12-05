@@ -411,11 +411,18 @@ class GameService:
         
         logger.info(f"Move processed for lobby {lobby_code} by identifier {identifier}. Result: {result.value}")
         
+        # Update the game state in Redis
+        await redis.set(
+            GameService._game_state_key(lobby_code),
+            json.dumps(game_state)
+        )
+
         return {
             "game_state": game_state,
             "result": result.value,
             "winner_identifier": winner_identifier,
             "current_turn_identifier": game_state.get("current_turn_identifier"),
+            "legal_moves": game_state.get("legal_moves")  # Include legal moves in the response
         }
     
     @staticmethod
