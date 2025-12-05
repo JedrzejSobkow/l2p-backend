@@ -590,8 +590,8 @@ class CheckersEngine(GameEngineInterface):
     def _get_all_legal_moves(self, game_state: Dict[str, Any], player_id: int) -> List[Dict[str, int]]:
         """Get all legal moves for a player"""
         # If forced capture is enabled, check for capture moves first
+        capture_moves = self._get_capture_moves(game_state, player_id)
         if self.forced_capture:
-            capture_moves = self._get_capture_moves(game_state, player_id)
             if capture_moves:
                 return capture_moves
         
@@ -599,6 +599,7 @@ class CheckersEngine(GameEngineInterface):
         board = game_state["board"]
         player_color = self.player_colors[player_id]
         legal_moves = []
+        legal_moves.extend(capture_moves)
         
         for row in range(self.board_size):
             for col in range(self.board_size):
