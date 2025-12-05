@@ -20,6 +20,8 @@ from schemas.game_schema import (
     GameErrorResponse,
     GameStateResponse,
 )
+from services.user_status_service import UserStatusService
+from schemas.user_status_schema import UserStatus
 from pydantic import ValidationError
 from exceptions.domain_exceptions import (
     NotFoundException,
@@ -183,6 +185,10 @@ class GameNamespace(GuestAuthNamespace):
             # Also broadcast to the room (in case other players are already connected)
             await self.emit("game_started", event.model_dump(mode='json'), room=lobby_code)
             
+            # Update status for all players
+            for pid in player_ids:
+                await UserStatusService.notify_friends(pid, UserStatus.IN_GAME, game_name=game_name)
+            
             logger.info(f"Game '{game_name}' created for lobby {lobby_code}")
             
         except ValidationError as e:
@@ -279,6 +285,26 @@ class GameNamespace(GuestAuthNamespace):
                     game_state=move_result["game_state"]
                 )
                 await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
+                
+                # Update status for all players
+                players = move_result["game_state"].get("players", [])
+                
+                # Get lobby info to restore IN_LOBBY status
+                lobby = await LobbyService.get_lobby(redis, lobby_code)
+
+                for player in players:
+                    pid = player.get("id") if isinstance(player, dict) else getattr(player, "id", None)
+                    if pid:
+                        if lobby:
+                            await UserStatusService.notify_friends(
+                                pid, 
+                                UserStatus.IN_LOBBY,
+                                lobby_code=lobby["lobby_code"],
+                                lobby_filled_slots=lobby["current_players"],
+                                lobby_max_slots=lobby["max_players"]
+                            )
+                        else:
+                            await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
             
             logger.info(f"Move made by user {identifier} in lobby {lobby_code}")
             
@@ -370,6 +396,26 @@ class GameNamespace(GuestAuthNamespace):
                 game_state=forfeit_result["game_state"]
             )
             await self.emit("game_ended", end_event.model_dump(mode='json'), room=lobby_code)
+            
+            # Update status for all players
+            players = forfeit_result["game_state"].get("players", [])
+            
+            # Get lobby info to restore IN_LOBBY status
+            lobby = await LobbyService.get_lobby(redis, lobby_code)
+
+            for player in players:
+                pid = player.get("id") if isinstance(player, dict) else getattr(player, "id", None)
+                if pid:
+                    if lobby:
+                        await UserStatusService.notify_friends(
+                            pid, 
+                            UserStatus.IN_LOBBY,
+                            lobby_code=lobby["lobby_code"],
+                            lobby_filled_slots=lobby["current_players"],
+                            lobby_max_slots=lobby["max_players"]
+                        )
+                    else:
+                        await UserStatusService.notify_friends(pid, UserStatus.ONLINE)
             
             logger.info(f"User {identifier} forfeited game in lobby {lobby_code}")
             

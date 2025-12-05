@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, status
-from api.routes import auth, avatars, friendship, chat, lobby
+from api.routes import auth, avatars, friendship, chat, lobby, user_status
 from api.exception_handlers import register_exception_handlers
 from infrastructure.redis_connection import redis_connection
 from infrastructure.postgres_connection import postgres_connection
@@ -102,6 +102,7 @@ app.include_router(avatars.avatar_router, prefix="/v1")
 app.include_router(friendship.friendship_router, prefix="/v1")
 app.include_router(chat.router, prefix="/v1")
 app.include_router(lobby.router, prefix="/v1")
+app.include_router(user_status.router, prefix="/v1")
 
 # Import game router
 from api.routes import game

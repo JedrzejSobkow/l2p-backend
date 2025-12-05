@@ -188,6 +188,10 @@ class ConnectionManager:
             identifier = f"user:{identifier}"
         return self.identifier_to_nickname.get(identifier)
 
+    def get_online_users_count(self) -> int:
+        """Get total number of online users"""
+        return len(self.active_connections)
+
 
 # Helper function to authenticate user from JWT token
 async def authenticate_user(token: str) -> Optional[RegisteredUser]:
