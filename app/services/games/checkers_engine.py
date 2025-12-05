@@ -37,11 +37,11 @@ class CheckersEngine(GameEngineInterface):
         if len(player_ids) != 2:
             raise ValueError("Checkers requires exactly 2 players")
         
-        # Parse custom rules (validation already done by parent class)
-        self.board_size = self.rules.get("board_size", 8)
-        self.forced_capture = self.rules.get("forced_capture", True)
-        self.flying_kings = self.rules.get("flying_kings", False)
-        self.backward_capture = self.rules.get("backward_capture", True)
+        # Parse and convert custom rules (validation already done by parent class)
+        self.board_size = int(self.rules.get("board_size", 8))
+        self.forced_capture = self._convert_to_boolean(self.rules.get("forced_capture", True))
+        self.flying_kings = self._convert_to_boolean(self.rules.get("flying_kings", False))
+        self.backward_capture = self._convert_to_boolean(self.rules.get("backward_capture", True))
         
         # Assign colors to players
         # Player 1 = White (starts at bottom, moves up)
@@ -50,6 +50,14 @@ class CheckersEngine(GameEngineInterface):
             player_ids[0]: "white",
             player_ids[1]: "black"
         }
+    
+    def _convert_to_boolean(self, value: Any) -> bool:
+        """Convert a value to boolean, handling string representations."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ["true", "1", "yes"]
+        return bool(value)
     
     def _initialize_game_specific_state(self) -> Dict[str, Any]:
         """Initialize checkers board with starting positions"""
@@ -421,9 +429,10 @@ class CheckersEngine(GameEngineInterface):
         board_hash = self._hash_board(board)
         game_state["position_history"].append(board_hash)
         
-        # Add all legal moves for the next player
+        # Check if the next player has any legal moves
         next_player_id = next(pid for pid in self.player_ids if pid != player_id)
-        game_state["legal_moves"] = self._get_all_legal_moves(game_state, next_player_id)
+        has_legal_moves = bool(self._get_all_legal_moves(game_state, next_player_id))
+        game_state["has_legal_moves"] = "Yes" if has_legal_moves else "No"
         
         return game_state
     
@@ -677,21 +686,21 @@ class CheckersEngine(GameEngineInterface):
                     description="Board size: 8 for standard checkers, 10 for international"
                 ),
                 "forced_capture": GameRuleOption(
-                    type="boolean",
-                    allowed_values=[False, True],
-                    default=True,
+                    type="string",
+                    allowed_values=["Yes", "No"],
+                    default="Yes",
                     description="Whether captures are mandatory (must capture when possible)"
                 ),
                 "flying_kings": GameRuleOption(
-                    type="boolean",
-                    allowed_values=[False, True],
-                    default=False,
+                    type="string",
+                    allowed_values=["Yes", "No"],
+                    default="No",
                     description="Whether kings can move multiple squares (international checkers)"
                 ),
                 "backward_capture": GameRuleOption(
-                    type="boolean",
-                    allowed_values=[False, True],
-                    default=True,
+                    type="string",
+                    allowed_values=["Yes", "No"],
+                    default="Yes",
                     description="Whether regular pieces can capture backward"
                 ),
                 "timeout_type": GameRuleOption(
