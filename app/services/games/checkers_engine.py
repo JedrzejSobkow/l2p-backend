@@ -674,19 +674,19 @@ class CheckersEngine(GameEngineInterface):
                 ),
                 "forced_capture": GameRuleOption(
                     type="boolean",
-                    allowed_values=None,
+                    allowed_values=[False, True],
                     default=True,
                     description="Whether captures are mandatory (must capture when possible)"
                 ),
                 "flying_kings": GameRuleOption(
                     type="boolean",
-                    allowed_values=None,
+                    allowed_values=[False, True],
                     default=False,
                     description="Whether kings can move multiple squares (international checkers)"
                 ),
                 "backward_capture": GameRuleOption(
                     type="boolean",
-                    allowed_values=None,
+                    allowed_values=[False, True],
                     default=True,
                     description="Whether regular pieces can capture backward"
                 ),
