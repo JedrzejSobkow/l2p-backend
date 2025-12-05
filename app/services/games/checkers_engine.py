@@ -421,6 +421,10 @@ class CheckersEngine(GameEngineInterface):
         board_hash = self._hash_board(board)
         game_state["position_history"].append(board_hash)
         
+        # Add all legal moves for the next player
+        next_player_id = next(pid for pid in self.player_ids if pid != player_id)
+        game_state["legal_moves"] = self._get_all_legal_moves(game_state, next_player_id)
+        
         return game_state
     
     def _hash_board(self, board: List[List[Optional[str]]]) -> str:
