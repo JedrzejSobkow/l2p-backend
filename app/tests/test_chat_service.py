@@ -947,7 +947,7 @@ class TestProcessSendMessage:
             friend_user_id=test_user_3.id,
             content="Hello, friend!"
         )
-        
+
         # Assert
         assert result is not None
         assert "message" in result
@@ -956,8 +956,8 @@ class TestProcessSendMessage:
         assert result["message"]["content"] == "Hello, friend!"
         assert result["message"]["sender_id"] == test_user_1.id
         assert result["message"]["image_url"] is None
-        assert result["sender"]["id"] == test_user_1.id
-        assert result["recipient"]["id"] == test_user_3.id
+        assert result["sender"]["identifier"] == f"user:{test_user_1.id}"
+        assert result["recipient"]["identifier"] == f"user:{test_user_3.id}"
     
     @patch('services.chat_service.ChatService.validate_image_path')
     @patch('services.chat_service.ChatService._get_image_url')
