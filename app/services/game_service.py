@@ -665,10 +665,21 @@ class GameService:
                 for player_id, adjustment in adjustments.items():
                     if adjustment == 0:
                         continue
+                    
+                    # Extract numeric ID from identifier format (e.g., 'user:123' -> 123)
+                    # Skip non-user identifiers (e.g., guests)
+                    if not player_id.startswith('user:'):
+                        continue
+                    
+                    try:
+                        numeric_id = int(player_id.split(':', 1)[1])
+                    except (IndexError, ValueError):
+                        logger.warning(f"Could not extract numeric ID from identifier: {player_id}")
+                        continue
                         
                     await session.execute(
                         update(RegisteredUser)
-                        .where(RegisteredUser.id == player_id)
+                        .where(RegisteredUser.id == numeric_id)
                         .values(elo=RegisteredUser.elo + adjustment)
                     )
                 
