@@ -645,3 +645,165 @@ class TestLudoEngine:
         result, winner = engine.check_game_result(state)
         assert result == GameResult.PLAYER_WIN
         assert winner == 1
+
+
+class TestLudoEngineEdgeCases:
+    """Test edge cases and unpokryte code paths"""
+    
+    def test_parse_bool_rule_with_no_value(self):
+        """Test _parse_bool_rule returns False for 'no' value"""
+        rules = {"six_grants_extra_turn": "no"}
+        engine = LudoEngine("TEST123", [1, 2], rules=rules)
+        
+        assert engine.six_grants_extra_turn is False
+    
+    def test_parse_bool_rule_with_boolean_false(self):
+        """Test _parse_bool_rule handles boolean False directly"""
+        # Note: validation requires string values, but _parse_bool_rule can handle both
+        # This tests the internal method, not full initialization
+        engine = LudoEngine("TEST123", [1, 2])
+        
+        # Test that the method itself can handle boolean
+        engine.rules = {"test_rule": False}
+        result = engine._parse_bool_rule("test_rule", True)
+        assert result is False
+    
+    def test_invalid_position_format_raises_error(self):
+        """Test that invalid position format raises ValueError"""
+        engine = LudoEngine("TEST123", [1, 2])
+        
+        with pytest.raises(ValueError, match="Invalid position format"):
+            engine._get_piece_position_value("invalid_format_123")
+    
+    def test_overshoot_main_track_without_exact_roll(self):
+        """Test piece can finish when overshooting without exact_roll_to_finish"""
+        rules = {"exact_roll_to_finish": "no"}
+        engine = LudoEngine("TEST123", [1, 2], rules=rules)
+        state = engine.initialize_game_state()
+        
+        # Player 0 (index 0), home entry at position 50
+        # Place piece at position 48, needs 2 to reach home entry, but roll 10
+        current_pos = "track_48"
+        dice_roll = 10
+        
+        new_pos = engine._calculate_new_position(1, current_pos, dice_roll)
+        # Should overshoot and finish
+        assert new_pos == "finished"
+    
+    def test_overshoot_home_entry_directly_to_finish(self):
+        """Test overshooting home entry goes straight to finished when overshoot > HOME_PATH_LENGTH"""
+        rules = {"exact_roll_to_finish": "no"}
+        engine = LudoEngine("TEST123", [1, 2], rules=rules)
+        
+        # Player 1 (index 0), home entry at position 50
+        # Place piece at position 45, roll 12
+        # Distance to home entry: (50-45) % 52 = 5
+        # Overshoot: 12 - 5 = 7, which is > HOME_PATH_LENGTH (6)
+        current_pos = "track_45"
+        dice_roll = 12
+        
+        new_pos = engine._calculate_new_position(1, current_pos, dice_roll)
+        # Should go directly to finished (line 190)
+        assert new_pos == "finished"
+    
+    def test_overshoot_home_path_without_exact_roll(self):
+        """Test piece can finish when overshooting home path without exact_roll_to_finish"""
+        rules = {"exact_roll_to_finish": "no"}
+        engine = LudoEngine("TEST123", [1, 2], rules=rules)
+        state = engine.initialize_game_state()
+        
+        # Piece at home_4, needs 2 to finish (home path length is 6)
+        # Roll 5 to overshoot
+        current_pos = "home_4"
+        dice_roll = 5
+        
+        new_pos = engine._calculate_new_position(1, current_pos, dice_roll)
+        # Should overshoot and finish
+        assert new_pos == "finished"
+    
+    def test_calculate_new_position_returns_none_for_invalid(self):
+        """Test _calculate_new_position returns None for invalid moves"""
+        engine = LudoEngine("TEST123", [1, 2])
+        
+        # Piece in yard with roll other than 6
+        result = engine._calculate_new_position(1, "yard", 3)
+        assert result is None
+        
+        # Finished piece cannot move
+        result = engine._calculate_new_position(1, "finished", 6)
+        assert result is None
+    
+    def test_is_safe_square_returns_false_for_unsafe_track(self):
+        """Test _is_safe_square returns False for non-safe track positions"""
+        engine = LudoEngine("TEST123", [1, 2])
+        
+        # Position 5 is not in SAFE_SQUARES [0, 8, 13, 21, 26, 34, 39, 47]
+        unsafe_position = "track_5"
+        is_safe = engine._is_safe_square(unsafe_position, 1)
+        assert is_safe is False
+        
+        # Position 10 is also not safe
+        unsafe_position = "track_10"
+        is_safe = engine._is_safe_square(unsafe_position, 1)
+        assert is_safe is False
+    
+    def test_advance_turn_respects_incomplete_turn(self):
+        """Test advance_turn doesn't advance if turn is not complete"""
+        engine = LudoEngine("TEST123", [1, 2, 3])
+        state = engine.initialize_game_state()
+        
+        # Set turn as incomplete
+        engine.turn_complete = False
+        
+        current_player = engine.current_player_id
+        engine.advance_turn()
+        
+        # Player should not have changed
+        assert engine.current_player_id == current_player
+    
+    def test_start_turn_preserves_state_when_incomplete(self):
+        """Test start_turn preserves game state when turn is incomplete"""
+        engine = LudoEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        # Set some state
+        state["dice_rolled"] = True
+        state["current_dice_roll"] = 5
+        engine.turn_complete = False
+        
+        new_state = engine.start_turn(state)
+        
+        # State should be preserved
+        assert new_state["dice_rolled"] is True
+        assert new_state["current_dice_roll"] == 5
+    
+    def test_start_turn_syncs_extra_turn_flag(self):
+        """Test start_turn properly handles extra_turn_pending flag"""
+        engine = LudoEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        # Scenario: both game state and engine have extra turn
+        state["extra_turn_pending"] = True
+        engine.extra_turn_pending = True
+        engine.turn_complete = True
+        
+        new_state = engine.start_turn(state)
+        
+        # Both should remain True
+        assert engine.extra_turn_pending is True
+        assert new_state.get("extra_turn_pending", False) is True
+    
+    def test_extra_turn_consumed_in_start_turn(self):
+        """Test that extra turn is properly consumed when advancing"""
+        engine = LudoEngine("TEST123", [1, 2])
+        state = engine.initialize_game_state()
+        
+        # Game state has extra turn, but engine consumed it
+        state["extra_turn_pending"] = True
+        engine.extra_turn_pending = False  # Already consumed
+        engine.turn_complete = True
+        
+        new_state = engine.start_turn(state)
+        
+        # Should update game state to reflect consumption
+        assert new_state["extra_turn_pending"] is False
