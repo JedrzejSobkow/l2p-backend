@@ -684,3 +684,125 @@ class TestGameEngineInterfaceExtended:
         assert hasattr(GameEngineInterface, 'apply_move')
         assert hasattr(GameEngineInterface.apply_move, '__isabstractmethod__')
         assert GameEngineInterface.apply_move.__isabstractmethod__ is True
+
+
+@pytest.mark.asyncio
+class TestGameEngineEdgeCases:
+    """Test edge cases and unpokryte code paths"""
+    
+    async def test_rule_validation_invalid_integer_type(self):
+        """Test validation error for non-integer value (line 109)"""
+        class IntRuleEngine(GameEngineInterface):
+            def _initialize_game_specific_state(self):
+                return {}
+            
+            def _validate_game_specific_move(self, game_state, player_id, move_data):
+                return MoveValidationResult(True)
+            
+            def apply_move(self, game_state, player_id, move_data):
+                return game_state
+            
+            def check_game_result(self, game_state):
+                return (GameResult.IN_PROGRESS, None)
+            
+            @classmethod
+            def get_game_name(cls):
+                return "int_test"
+            
+            @classmethod
+            def get_game_info(cls):
+                return GameInfo(
+                    game_name="int_test",
+                    display_name="Integer Test",
+                    min_players=2,
+                    max_players=2,
+                    description="Test integer rules",
+                    supported_rules={
+                        "count": GameRuleOption(
+                            type="integer",
+                            default=5,
+                            description="Count value"
+                        )
+                    },
+                    turn_based=True,
+                    category="test"
+                )
+        
+        # Invalid - string instead of integer (line 109)
+        with pytest.raises(ValueError, match="must be an integer"):
+            IntRuleEngine("TEST", [1, 2], rules={"count": "five"})
+    
+    async def test_check_timeout_no_action_configured(self):
+        """Test check_timeout returns False when no timeout occurred (line 343)"""
+        # Engine with timeout configured
+        engine = MockMultiplayerEngine(
+            "TEST",
+            [1, 2, 3],
+            rules={
+                "timeout_type": "per_turn",
+                "timeout_seconds": 30,
+            }
+        )
+        
+        game_state = engine.initialize_game_state()
+        # Set recent turn start time - no timeout
+        game_state["timing"]["turn_start_time"] = datetime.now(UTC).isoformat()
+        
+        # Should return False, None when no timeout occurred (line 343)
+        timeout_occurred, _ = engine.check_timeout(game_state)
+        assert timeout_occurred is False  # Line 343
+    
+    async def test_consume_turn_time_with_no_timeout(self):
+        """Test consume_turn_time returns early when timeout_type is NONE (line 356)"""
+        engine = MockMultiplayerEngine("TEST", [1, 2, 3])  # No timeout configured
+        
+        game_state = engine.initialize_game_state()
+        result = engine.consume_turn_time(game_state)
+        
+        # Should return unchanged when no timeout (line 356)
+        assert result == game_state
+    
+    async def test_get_remaining_time_unknown_type(self):
+        """Test get_remaining_time returns None for unknown timeout type (line 425)"""
+        engine = MockMultiplayerEngine("TEST", [1, 2, 3])
+        game_state = engine.initialize_game_state()
+        
+        # Manually set an invalid timeout_type to trigger line 425
+        engine.timeout_type = "INVALID_TYPE"  # Not a valid TimeoutType
+        
+        remaining = engine.get_remaining_time(game_state)
+        assert remaining is None  # Line 425
+    
+    async def test_forfeit_two_player_winner_assignment(self):
+        """Test forfeit_game sets winner_id for 2-player games (line 464)"""
+        engine = MockMultiplayerEngine("TEST", [100, 200])  # 2 players
+        
+        # Player 100 forfeits
+        result, winner_id = engine.forfeit_game(100)
+        
+        # Winner should be player 200 (line 464)
+        assert result == GameResult.FORFEIT
+        assert winner_id == 200
+        assert engine.winner_id == 200
+    
+    async def test_calculate_elo_adjustments_with_winner(self):
+        """Test calculate_elo_adjustments when there's a winner (lines 478-489)"""
+        engine = MockMultiplayerEngine("TEST", [1, 2, 3])
+        game_state = {"winner_id": 2}
+        
+        adjustments = engine.calculate_elo_adjustments(game_state)
+        
+        # Winner gets +1, losers get -1 (lines 478-489)
+        assert adjustments[1] == -1
+        assert adjustments[2] == 1
+        assert adjustments[3] == -1
+    
+    async def test_calculate_elo_adjustments_no_winner(self):
+        """Test calculate_elo_adjustments when there's no winner"""
+        engine = MockMultiplayerEngine("TEST", [1, 2, 3])
+        game_state = {}  # No winner_id
+        
+        adjustments = engine.calculate_elo_adjustments(game_state)
+        
+        # No adjustments when no winner
+        assert adjustments == {}
