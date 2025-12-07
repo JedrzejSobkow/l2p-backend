@@ -8,6 +8,7 @@ from services.game_engine_interface import GameEngineInterface
 from services.games.tictactoe_engine import TicTacToeEngine
 from services.games.clobber_engine import ClobberEngine
 from services.games.soccer_engine import SoccerEngine
+from services.games.checkers_engine import CheckersEngine
 from services.games.ludo_engine import LudoEngine
 
 
@@ -36,4 +37,4 @@ def _discover_game_engines() -> Dict[str, Type[GameEngineInterface]]:
 # Build the registry automatically
 GAME_ENGINES: Dict[str, Type[GameEngineInterface]] = _discover_game_engines()
 
-__all__ = ["TicTacToeEngine", "ClobberEngine","SoccerEngine", "GAME_ENGINES"]
+__all__ = ["TicTacToeEngine", "ClobberEngine", "CheckersEngine","SoccerEngine", "LudoEngine","SoccerEngine", "GAME_ENGINES"]
