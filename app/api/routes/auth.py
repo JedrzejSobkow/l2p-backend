@@ -28,7 +28,7 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 
 # Include authentication routes (login, logout)
 auth_router.include_router(
-    fastapi_users.get_auth_router(auth_backend),
+    fastapi_users.get_auth_router(auth_backend, requires_verification=True),
 )
 
 # Include Google OAuth routes
@@ -75,7 +75,7 @@ auth_router.include_router(
 )
 
 # Dependency to get current active user
-current_active_user = fastapi_users.current_user(active=True) #TODO verification required?
+current_active_user = fastapi_users.current_user(active=True, verified=True)
 
 # Dependency to get current active superuser
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
