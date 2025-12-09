@@ -788,7 +788,7 @@ class TestGameEngineEdgeCases:
     async def test_calculate_elo_adjustments_with_winner(self):
         """Test calculate_elo_adjustments when there's a winner (lines 478-489)"""
         engine = MockMultiplayerEngine("TEST", [1, 2, 3])
-        game_state = {"winner_id": 2}
+        game_state = {"winner_identifier": 2}
         
         adjustments = engine.calculate_elo_adjustments(game_state)
         

@@ -476,7 +476,7 @@ class GameEngineInterface(ABC):
             Dictionary mapping player_id to ELO adjustment (e.g. {1: 1, 2: -1})
         """
         adjustments = {}
-        winner_id = game_state.get("winner_id")
+        winner_id = game_state.get("winner_identifier")
         
         if winner_id:
             # Base case: Winner gets +1, everyone else gets -1
